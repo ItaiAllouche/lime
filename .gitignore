@@ -1,0 +1,18 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments (optional but recommended)
+venv/
+.env/
+.venv/
+
+# Jupyter checkpoints (if you use them)
+.ipynb_checkpoints/
+
+# VSCode (optional)
+.vscode/
+
+# macOS
+.DS_Store
