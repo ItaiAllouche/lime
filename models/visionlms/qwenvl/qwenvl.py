@@ -1,0 +1,535 @@
+from PIL import Image
+import torch
+import torch.nn as nn
+from transformers import Qwen2_5_VLForConditionalGeneration, AutoTokenizer, AutoProcessor
+from typing import Literal
+import copy
+
+from ...descriptor import KVOptDesc
+from .modeling_qwen2_5_vl_kv_opt import Qwen2_5_VLForConditionalGenerationKVOpt, Qwen2_5_VLModel
+
+import sys
+sys.path.append('/app/dev/')
+from lrp.patches import patch_qwenvl
+from plot import plot_relevance
+from utils import compare_model_to_reference
+
+QWEN_2_5_VL_ID = "Qwen/Qwen2.5-VL-7B-Instruct"
+
+class QwenVL(nn.Module):
+    def __init__(
+        self,
+    ):
+        super().__init__()
+        self.model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+            QWEN_2_5_VL_ID,
+            attn_implementation="eager",
+        )
+
+        self.processor = AutoProcessor.from_pretrained(QWEN_2_5_VL_ID)
+
+        # freeze parameters
+        for p in self.model.parameters():
+            p.requires_grad = False
+
+    def get_inputs_for_forward(
+        self,
+        instruction: str,
+        image_path: str,
+        device_num: int = 0
+    ):
+        device = f'cuda:{device_num}' if torch.cuda.is_available() else 'cpu'
+        
+        image = Image.open(image_path).convert("RGB")
+
+        # create conversation with proper audio token format
+        conversation = [
+            {"role": "user", "content": [
+                    {"type": "text", "text": instruction},
+                    {"type": "image"},
+                ],
+            }
+        ]
+
+        prompt = self.processor.apply_chat_template(
+            conversation=conversation,
+            tokenize=False,
+            add_generation_prompt=True
+        )
+
+        inputs = self.processor(
+            text=prompt,
+            images=image,
+            return_tensors="pt",
+            padding=True
+        )
+        inputs = {k: v.to(device) if hasattr(v, 'to') else v for k, v in inputs.items()}
+        
+        return inputs
+
+    def generate(
+        self,
+        inputs: dict,
+        max_new_tokens: int = 120,
+        plot: bool = False        
+    ):
+        _, T = inputs["input_ids"].shape
+
+        with torch.inference_mode():
+            output = self.model.generate(
+                **inputs,
+                output_attentions=False,
+                max_new_tokens=max_new_tokens,
+                use_cache=True,
+                return_dict_in_generate=True                
+            )
+        generated_only_ids = output.sequences[:, T:]
+        response = self.processor.batch_decode(
+            generated_only_ids,
+            skip_special_tokens=True,
+            clean_up_tokenization_spaces=False
+        )[0]
+
+        if plot:
+            print(f"Model's output: {response}" )
+
+        return response            
+
+class QwenVLKVOpt(nn.Module):
+    def __init__(
+        self,
+        verbose: bool = False
+    ):
+        super().__init__()
+        self.model = Qwen2_5_VLForConditionalGenerationKVOpt.from_pretrained(
+            QWEN_2_5_VL_ID,
+            attn_implementation="eager",
+        )
+
+        self.processor = AutoProcessor.from_pretrained(QWEN_2_5_VL_ID)
+
+        # replace the language model with the custom one
+        original_lm = self.model.model
+        self.model.model = Qwen2_5_VLModel(original_lm.config)
+        self.model.model.load_state_dict(original_lm.state_dict(), strict=False)
+
+        # # Create reference model AFTER loading weights
+        # self.model.reference_model = copy.deepcopy(self.model.model)
+        # self.model.reference_model.eval()
+        # for p in self.model.reference_model.parameters():
+        #     p.requires_grad = False
+
+        # freeze parameters
+        for p in self.model.parameters():
+            p.requires_grad = False 
+
+        self.processor = AutoProcessor.from_pretrained(QWEN_2_5_VL_ID)
+
+        # lrp patching
+        # patch_qwenvl(verbose)
+
+        # validate equality of between model and reference model
+        # compare_model_to_reference(self.model.model)    
+
+    def get_inputs_for_forward(
+        self,
+        instruction: str,
+        image_path: str,
+        device_num: int = 0
+    ):
+        device = f'cuda:{device_num}' if torch.cuda.is_available() else 'cpu'
+        
+        image = Image.open(image_path).convert("RGB")
+
+        # create conversation with proper audio token format
+        conversation = [
+            {"role": "user", "content": [
+                    {"type": "text", "text": instruction},
+                    {"type": "image"},
+                ],
+            }
+        ]
+
+        prompt = self.processor.apply_chat_template(
+            conversation=conversation,
+            tokenize=False,
+            add_generation_prompt=True
+        )
+
+        inputs = self.processor(
+            text=prompt,
+            images=image,
+            return_tensors="pt",
+            padding=True
+        )
+        inputs = {k: v.to(device) if hasattr(v, 'to') else v for k, v in inputs.items()}
+        
+        return inputs
+    
+    def _outputs_for_relevance(
+        self,
+        inputs: dict,
+        desc: KVOptDesc, 
+        position_ids
+    ):
+        model = self.model
+        
+        stash = {}
+        def _cap_inputs_embeds(mod, args, kwargs):
+            x = kwargs.get("inputs_embeds", None)
+            if x is not None and "merged" not in stash:
+                x.requires_grad_(True)
+                x.retain_grad()
+                stash["merged"] = x
+                kwargs["inputs_embeds"] = x
+            return args, kwargs
+
+        h = model.model.register_forward_pre_hook(_cap_inputs_embeds, with_kwargs=True)
+
+        model.zero_grad(set_to_none=True)
+        outputs = model(
+            **inputs,
+            use_cache=False,
+            output_attentions=False,
+            position_ids=position_ids,
+            desc=desc
+        )
+
+        h.remove()
+
+        return outputs, stash
+    
+    def _top_k_top_p_filtering(
+        self,
+        logits,
+        top_k=0,
+        top_p=1.0,
+        filter_value=-float("inf")
+    ):
+        # logits: [batch, vocab]
+        if top_k > 0:
+            top_k = min(top_k, logits.size(-1))
+            v, _ = torch.topk(logits, top_k)
+            min_vals = v[:, -1, None]
+            logits = torch.where(logits < min_vals, torch.full_like(logits, filter_value), logits)
+
+        if top_p < 1.0:
+            sorted_logits, sorted_indices = torch.sort(logits, descending=True, dim=-1)
+            probs = nn.functional.softmax(sorted_logits, dim=-1)
+            cumprobs = probs.cumsum(dim=-1)
+
+            # mask tokens with cumulative prob > top_p
+            mask = cumprobs > top_p
+            # always keep at least one token
+            mask[..., 0] = False
+
+            sorted_logits = torch.where(mask, torch.full_like(sorted_logits, filter_value), sorted_logits)
+            # unsort back
+            logits = torch.full_like(logits, filter_value)
+            logits.scatter_(dim=-1, index=sorted_indices, src=sorted_logits)
+
+        return logits
+    
+    def _decode(
+        self,
+        logits: torch.Tensor,
+        input_ids: torch.Tensor,
+        do_sample: bool,
+        temperature: float,
+        repetition_penalty: float,
+        top_k: float,
+        top_p: float
+    ):
+        with torch.no_grad():
+            next_token_logits = logits[:, -1, :] 
+
+            # apply repetition penalty
+            if repetition_penalty != 1.0:
+                for b in range(next_token_logits.size(0)):
+                    prev_tokens = input_ids[b]
+                    # apply penalty only on previously generated tokens
+                    prev_tokens_unique = prev_tokens.unique()
+                    token_logits = next_token_logits[b, prev_tokens_unique]
+                    negative = token_logits < 0
+                    token_logits[negative] *= repetition_penalty
+                    token_logits[~negative] /= repetition_penalty
+                    next_token_logits[b, prev_tokens_unique] = token_logits
+
+            # apply temperature
+            next_token_logits = next_token_logits / temperature
+
+            # apply top_k and top_p
+            if do_sample:
+                filtered_logits = self._top_k_top_p_filtering(next_token_logits, top_k, top_p)
+                probs = nn.functional.softmax(filtered_logits, dim=-1)
+                next_token = torch.multinomial(probs, num_samples=1)
+
+            # greedy decoding
+            else:
+                next_token = next_token_logits.argmax(dim=-1, keepdim=True)
+
+            return next_token
+        
+    def generate(
+        self,
+        inputs: dict,
+        approach: Literal['opt', 'vanila'], 
+        opt_steps: int = 3,
+        opt_lr: int = 3e-2,
+        lambda_kl: float = 1,
+        lambda_relevance_multimodal: float = 0.7,
+        lambda_relevance_text: float = 0.7,
+        deltas_layers: list = list(range(0,28)), # qwen2_5VL has 28 decoder layers
+        example: str = '',
+        max_new_tokens: int = 50, 
+        plot: bool = False            
+    ):
+        if plot:
+            relevances = []
+        
+        device = next(self.model.parameters()).device
+        inputs = {k: v.to(device) if hasattr(v, 'to') else v for k, v in inputs.items()}
+        input_ids = inputs["input_ids"].to(device) 
+        
+        # image inputs stay fixed
+        fixed_inputs = {
+            "pixel_values": inputs.get("pixel_values", None),
+            "image_grid_thw": inputs.get("image_grid_thw", None),
+        }             
+        
+        _, T = inputs["input_ids"].shape
+        head_dim = self.model.model.config.hidden_size // \
+                   self.model.model.config.num_attention_heads
+        
+        # audio span indices
+        tokens = self.processor.tokenizer.convert_ids_to_tokens(inputs['input_ids'][0].tolist())
+        modality_bos_idx = next(i for i, t in enumerate(tokens) if t == "<|vision_start|>")
+        modality_eos_idx = next(i for i, t in enumerate(tokens) if t == "<|vision_end|>")
+        eos_id = self.processor.tokenizer.eos_token_id
+        print(f'modality_bos_idx: {modality_bos_idx} | audio_eos_idx: {modality_eos_idx}')
+        
+        # initlizte trainable kv deltas per layer - not registerd in the model 
+        kv_deltas = {}
+        delta_params = []
+        for layer_idx in deltas_layers:
+            delta_k = torch.zeros(
+                1,
+                self.model.model.config.num_attention_heads,
+                input_ids.shape[1],
+                head_dim,
+                device=device,
+                requires_grad=True
+            )
+            delta_v = torch.zeros(
+                1,
+                self.model.model.config.num_attention_heads,
+                input_ids.shape[1],
+                head_dim,
+                device=device,
+                requires_grad=True
+            )            
+            kv_deltas[layer_idx] = (delta_k, delta_v)
+            delta_params.extend([delta_k, delta_v])
+
+        self.model.eval()
+
+        # adam optimizer for deltas kv tuning
+        optimizer = torch.optim.Adam(delta_params, lr=opt_lr)
+
+        # parameters for generation
+        do_sample = self.model.generation_config.do_sample
+        temperature = self.model.generation_config.temperature if do_sample else 1.0
+        repetition_penalty = self.model.generation_config.repetition_penalty if do_sample else 1.0
+        top_k = self.model.generation_config.top_k if do_sample else 0
+        top_p = self.model.generation_config.top_p if do_sample else 1.0
+
+        # initilize KVOpt description
+        desc = KVOptDesc(
+                    deltas_layers=deltas_layers,
+                    lambda_kl=lambda_kl,
+                    lambda_relevance_multimodal=lambda_relevance_multimodal,
+                    lambda_relevance_text=lambda_relevance_text,
+                    approach=approach,
+                    modality_bos_idx=modality_bos_idx,
+                    modality_eos_idx=modality_eos_idx,
+                    prompt_len=T,
+                )
+        desc.set_kv_deltas(kv_deltas)
+        desc.set_reference_logits(None)
+        
+        # generation process
+        for step in range(max_new_tokens):
+            print(f'\n---------------------')
+            print(f'Generation step: {step}')
+
+            # optimize k and v by Adam opt
+            for opt_step in range(opt_steps):
+
+                # inputs for current forward
+                attention_mask = torch.ones_like(input_ids, device=device)
+                position_ids = (attention_mask.cumsum(-1) - 1).masked_fill(attention_mask == 0, 0)
+                model_inputs = {
+                    "input_ids": input_ids,
+                    "attention_mask": attention_mask,
+                    **fixed_inputs,
+                }
+
+                # forward + optimization step
+                optimizer.zero_grad()
+
+                if approach == 'opt':
+                    print(f'Adam step: {opt_step}')
+                    
+                    # compute relevance using LRP
+                    outputs, stash = self._outputs_for_relevance(model_inputs, desc, position_ids)
+                    # kl_loss = desc.kl_loss
+                    kl_loss = 0
+
+                    assert kl_loss is not None, "KL loss is None when approach='opt'."
+
+                    nonpad_idx = torch.where(model_inputs['attention_mask'][0].to(torch.bool))[0].tolist()
+                    target_pos = nonpad_idx[-1] # last non-padded token
+
+                    with torch.no_grad():
+                        next_token = self._decode(
+                            outputs.logits,
+                            input_ids, do_sample,
+                            temperature,
+                            repetition_penalty,
+                            top_k,
+                            top_p
+                        )
+
+                    # next predicted token id at that position (for batch 0)
+                    next_id = int(next_token[0, 0].item())
+                    target_logit = outputs.logits[0, target_pos, next_id]
+
+                    merged = stash["merged"]
+
+                    grad_merged = torch.autograd.grad(
+                        outputs=target_logit,
+                        inputs=merged,
+                        # retain_graph=True,
+                        create_graph=True,# false
+                        allow_unused=False,
+                    )[0]        
+
+                    # token-level relevance as grad * input, normalized to [0, 1]
+                    # relevance = (grad_merged.detach()[0] * merged[0]).sum(-1)
+                    relevance = (grad_merged[0] * merged[0]).sum(-1)
+                    image_relevance = relevance[desc.modality_bos_idx:desc.modality_eos_idx+1]
+                    text_relevance = torch.cat((relevance[:desc.modality_bos_idx], relevance[desc.modality_eos_idx+1:]))
+                    # audio_relevance = audio_relevance / (audio_relevance.abs().max().detach() + 1e-12)
+                    # audio_relevance = (audio_relevance + 1) / 2
+                    # audio_relevance = audio_relevance.mean()
+                    image_relevance = image_relevance.abs().sum()
+                    text_relevance = text_relevance.abs().sum()
+                    image_relevance = image_relevance / (relevance.abs().sum() + 1e-12)
+                    text_relevance = text_relevance / (relevance.abs().sum() + 1e-12)
+ 
+                    # audio_relevance = relevance[desc.modality_bos_idx:desc.modality_eos_idx+1].mean()
+
+                    loss = lambda_kl * kl_loss - lambda_relevance_multimodal * image_relevance + lambda_relevance_text * text_relevance
+                    # print(f'KL: {kl_loss.item():.4f} | Relevance: {float(image_relevance):.4f} | Overall loss: {loss.item():.4f}')
+                    print(f'KL: {kl_loss} | Image Relevance: {float(image_relevance):.4f} | Text Relevance: {float(text_relevance):.4f} | Image/Text:  {(float(image_relevance)/float(text_relevance)):.4f} |Overall loss: {loss.item():.4f}')
+                    print(f'λ_kl X kl: {float(lambda_kl * kl_loss):.4f} | λ_relevance_image X relevance_image: {float(lambda_relevance_multimodal * image_relevance):.4f} | λ_relevance_text X text_relevance: {float(lambda_relevance_text * text_relevance):.4f}')
+                    
+                    loss.backward()
+                    optimizer.step()
+
+                # approach = vanila
+                else:
+                    outputs = self.model(
+                        **model_inputs,
+                        use_cache=True,
+                        position_ids=position_ids,
+                        desc=desc
+                    )
+
+            # decode next token from last logits
+            with torch.no_grad():
+                next_token = self._decode(
+                    outputs.logits,
+                    input_ids,
+                    do_sample,
+                    temperature,
+                    repetition_penalty,
+                    top_k,
+                    top_p
+                )
+
+            # here we do another forward pass to calculate the lrp relevance
+            if plot:
+                plot_outputs, plot_stash = self._outputs_for_relevance(model_inputs, desc, position_ids)
+                nonpad_idx = torch.where(model_inputs['attention_mask'][0].to(torch.bool))[0].tolist()
+                target_pos = nonpad_idx[-1] # last non-padded token                
+                next_id = int(next_token[0, 0].item())
+                target_logit = plot_outputs.logits[0, target_pos, next_id]
+
+                merged = plot_stash["merged"]
+
+                grad_merged = torch.autograd.grad(
+                    outputs=target_logit,
+                    inputs=merged,
+                    retain_graph=False,
+                    create_graph=False,
+                    allow_unused=False,
+                )[0]        
+
+                # token-level relevance as grad * input, normalized to [-1, 1]
+                relevance = (grad_merged.detach()[0] * merged[0]).sum(-1)
+                relevance = relevance / (relevance.abs().max().detach() + 1e-12)
+                relevances.append(relevance.detach().to(torch.float32).cpu().numpy())
+                plot_relevance(relevances, desc.modality_bos_idx, desc.modality_eos_idx+1, f'qwenvl/{example}')
+
+            input_ids = torch.cat([input_ids, next_token], dim=1)
+
+            # early stop if EOS everywhere
+            if eos_id is not None and (next_token == eos_id).all():
+                print(f'---------------------')
+                break      
+
+            # decode current answer
+            answer_ids = input_ids[:, T:]
+            decoded_answer = self.processor.batch_decode(answer_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]            
+
+            if plot:
+                print(f"Partial answer: {decoded_answer}")
+                print(f'---------------------')
+
+            # resets for next token generation
+            desc.set_reference_logits(None)
+            kv_deltas = {}
+            delta_params = []
+            for layer_idx in deltas_layers:
+                delta_k = torch.zeros(
+                    1,
+                    self.model.model.config.num_attention_heads,
+                    input_ids.shape[1],
+                    head_dim,
+                    device=device,
+                    requires_grad=True
+                )
+                delta_v = torch.zeros(
+                    1,
+                    self.model.model.config.num_attention_heads,
+                    input_ids.shape[1],
+                    head_dim,
+                    device=device,
+                    requires_grad=True
+                )            
+                kv_deltas[layer_idx] = (delta_k, delta_v)
+                delta_params.extend([delta_k, delta_v])
+            optimizer = torch.optim.Adam(delta_params, lr=opt_lr)
+            desc.set_kv_deltas(kv_deltas)
+
+        # parse output
+        gen_ids = input_ids[:, T:]
+        response = self.processor.batch_decode(gen_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
+
+        if plot:
+            print(f'\nTokens: {tokens}')
+            print(f"Model's output: {response}" )
+         
+        return response
+        
