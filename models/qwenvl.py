@@ -167,14 +167,15 @@ class QwenVLLIME(nn.Module):
     def generate(
         self,
         inputs: str,
-        opt_steps: int = 3,
-        opt_lr: float = 3e-2,
-        lambda_kl: float = 1,
+        opt_steps: int = 7,
+        opt_lr: float = 0.0004,
+        lambda_kl: float = 0.1,
         deltas_layers: list =list(range(0,32)), # Qwen-VL-Chat has 32 decoder layers
         max_new_tokens: int = 50, 
-        plot: bool = False            
+        plot: bool = False,
+        output_relevance: bool = False        
     ):
-        relevances = []
+        relevances = [] if output_relevance else None
         
         device = next(self.model.parameters()).device
 
@@ -326,8 +327,11 @@ class QwenVLLIME(nn.Module):
 
                 # Token-level relevance as grad * input
                 relevance = (grad_merged[0] * merged[0]).sum(-1)
-                tau = 0.1
 
+                if output_relevance and opt_step + 1 == opt_steps:
+                    relevances.append(relevance.detach().to(torch.float32).cpu().numpy())  
+
+                tau = 0.1
                 log_probs = nn.functional.log_softmax(relevance / tau, dim=-1)
                 relevance_loss = -(log_probs[desc.modality_bos_idx:desc.modality_eos_idx+1].mean())
                 loss = lambda_kl * kl_loss + relevance_loss

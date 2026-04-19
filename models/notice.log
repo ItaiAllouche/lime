@@ -1,6 +1,0 @@
-Patching SALMONN with LXT:
-since the torch and transformers version of salmonn project do not match to corresponding LXT versions,
-we need to implicitly comment out any mention all models other than llama in the LXT code.
-finally, we need to comment out the mentions in: /usr/local/lib/python3.9/site-packages/lxt/efficient/models/__init__.py
-
-good luck!

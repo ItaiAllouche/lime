@@ -2,7 +2,6 @@ from PIL import Image
 import torch
 import torch.nn as nn
 from transformers import AutoProcessor
-from typing import Literal
 import copy
 import gc
 
@@ -189,14 +188,13 @@ class QwenVL2_5LIME(nn.Module):
     def generate(
         self,
         inputs: dict,
-        approach: Literal['opt', 'vanila'], 
-        opt_steps: int = 3,
-        opt_lr: int = 3e-2,
-        lambda_kl: float = 1,
+        opt_steps: int = 7,
+        opt_lr: int = 0.0003,
+        lambda_kl: float = 0.1,
         deltas_layers: list = list(range(0,28)), # qwen2_5VL has 28 decoder layers
         max_new_tokens: int = 50, 
         plot: bool = False,
-        output_relevance: bool = False 
+        output_relevance: bool = False
     ):
         relevances = [] if output_relevance else None
         
@@ -260,7 +258,7 @@ class QwenVL2_5LIME(nn.Module):
         desc = LimeDesc(
             deltas_layers=deltas_layers,
             lambda_kl=lambda_kl,
-            approach=approach,
+            approach='opt',
             modality_bos_idx=modality_bos_idx,
             modality_eos_idx=modality_eos_idx,
             prompt_len=T,
@@ -288,71 +286,61 @@ class QwenVL2_5LIME(nn.Module):
                 # forward + optimization step
                 optimizer.zero_grad()
 
-                if approach == 'opt':
-                    print(f'Adam step: {opt_step}')
-                    
-                    # compute relevance using LRP
-                    outputs, stash = self._outputs_for_relevance(
-                        inputs=model_inputs,
-                        desc=desc, 
-                        # position_ids=position_ids
+                print(f'Adam step: {opt_step}')
+                
+                # compute relevance using LRP
+                outputs, stash = self._outputs_for_relevance(
+                    inputs=model_inputs,
+                    desc=desc, 
+                    # position_ids=position_ids
+                )
+                kl_loss = desc.kl_loss
+
+                assert kl_loss is not None, "KL loss is None."
+
+                nonpad_idx = torch.where(model_inputs['attention_mask'][0].to(torch.bool))[0].tolist()
+                target_pos = nonpad_idx[-1] # last non-padded token
+
+                with torch.no_grad():
+                    next_token = self._decode(
+                        outputs.logits,
+                        input_ids,
+                        do_sample,
+                        temperature,
+                        repetition_penalty,
+                        top_k,
+                        top_p
                     )
-                    kl_loss = desc.kl_loss
 
-                    assert kl_loss is not None, "KL loss is None when approach='opt'."
+                # next predicted token id at that position (for batch 0)
+                next_id = int(next_token[0, 0].item())
+                target_logit = outputs.logits[0, target_pos, next_id]
 
-                    nonpad_idx = torch.where(model_inputs['attention_mask'][0].to(torch.bool))[0].tolist()
-                    target_pos = nonpad_idx[-1] # last non-padded token
+                merged = stash["merged"]
 
-                    with torch.no_grad():
-                        next_token = self._decode(
-                            outputs.logits,
-                            input_ids,
-                            do_sample,
-                            temperature,
-                            repetition_penalty,
-                            top_k,
-                            top_p
-                        )
+                grad_merged = torch.autograd.grad(
+                    outputs=target_logit,
+                    inputs=merged,
+                    # retain_graph=True,
+                    create_graph=True,# false
+                    allow_unused=False,
+                )[0]        
 
-                    # next predicted token id at that position (for batch 0)
-                    next_id = int(next_token[0, 0].item())
-                    target_logit = outputs.logits[0, target_pos, next_id]
+                # token-level relevance as grad * input
+                relevance = (grad_merged[0] * merged[0]).sum(-1)
 
-                    merged = stash["merged"]
+                if output_relevance and opt_step + 1 == opt_steps:
+                    relevances.append(relevance.detach().to(torch.float32).cpu().numpy())             
 
-                    grad_merged = torch.autograd.grad(
-                        outputs=target_logit,
-                        inputs=merged,
-                        # retain_graph=True,
-                        create_graph=True,# false
-                        allow_unused=False,
-                    )[0]        
+                tau = 0.1
+                log_probs = nn.functional.log_softmax(relevance / tau, dim=-1)
+                relevance_loss = - (log_probs[desc.modality_bos_idx:desc.modality_eos_idx+1].mean())
+                loss = lambda_kl * kl_loss + relevance_loss
 
-                    # token-level relevance as grad * input
-                    relevance = (grad_merged[0] * merged[0]).sum(-1)
-
-                    if output_relevance and opt_step + 1 == opt_steps:
-                        relevances.append(relevance.detach().to(torch.float32).cpu().numpy())             
-
-                    tau = 0.1
-                    log_probs = nn.functional.log_softmax(relevance / tau, dim=-1)
-                    relevance_loss = - (log_probs[desc.modality_bos_idx:desc.modality_eos_idx+1].mean())
-                    loss = lambda_kl * kl_loss + relevance_loss
-
-                    print(f'KL: {kl_loss.item():.4f} | Image Relevance: {float(-relevance_loss):.4f} | Overall loss: {loss.item():.4f}')
-                    
-                    loss.backward()
-                    optimizer.step()
-
-                # approach = vanila
-                else:
-                    outputs = self.model(
-                        **model_inputs,
-                        use_cache=True,
-                        # position_ids=position_ids,
-                        desc=desc
-                    )
+                print(f'KL: {kl_loss.item():.4f} | Image Relevance: {float(-relevance_loss):.4f} | Overall loss: {loss.item():.4f}')
+                
+                loss.backward()
+                optimizer.step()
 
             # decode next token from last logits
             with torch.no_grad():
