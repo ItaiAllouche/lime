@@ -669,16 +669,15 @@ def eager_attention_forward(
     value: torch.Tensor,
     attention_mask: Optional[torch.Tensor],
     scaling: float,
-    desc: Optional[KVOptDesc],
+    desc: Optional[KVOptDesc], ########## itai change ##########
     dropout: float = 0.0,
     **kwargs,
 ):    
     key_states = repeat_kv(key, module.num_key_value_groups)
     value_states = repeat_kv(value, module.num_key_value_groups)
 
+    ########## itai change ##########
     if module.layer_idx in desc.deltas_layers and desc.approach == 'opt':
-        modality_bos_idx = desc.modality_bos_idx
-        modality_eos_idx = desc.modality_eos_idx
         kv_deltas = desc.kv_deltas
         delta_k, delta_v = kv_deltas[module.layer_idx]
 
@@ -691,6 +690,7 @@ def eager_attention_forward(
         # apply deltas only on image keys and values
         key_states[:, :, :, :] += delta_k_exp
         value_states[:, :, :, :] += delta_v_exp
+    ########## itai change ##########
 
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
     
@@ -1903,7 +1903,6 @@ class Qwen2_5_VLForConditionalGenerationKVOpt(Qwen2_5_VLPreTrainedModel, Generat
                 reference_desc = KVOptDesc(
                     deltas_layers=desc.deltas_layers,
                     lambda_kl=desc.lambda_kl,
-                    lambda_relevance=desc.lambda_relevance,
                     approach='vanila',
                     modality_bos_idx=desc.modality_bos_idx,
                     modality_eos_idx=desc.modality_eos_idx,

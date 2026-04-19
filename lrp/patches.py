@@ -5,8 +5,7 @@ import sys
 sys.path.append('/app/dev/models')
 from models.speechlms.qwen2_audio import modeling_qwen2_audio_kv_opt
 from models.visionlms.llava import modeling_llama_kv_opt
-from models.speechlms.salmonn7b import modeling_llama_kv_opt_salmonn
-from models.visionlms.qwenvl import modeling_qwen2_5_vl_kv_opt
+from models.visionlms.qwenvl2_5 import modeling_qwen2_5_vl_kv_opt
 
 def patch_qwen2_audio(verbose: bool = False): 
     if not getattr(modeling_qwen2_audio_kv_opt, "_lxt_attn_patched", False):
@@ -53,7 +52,7 @@ def patch_llava(verbose: bool = False):
     if verbose and success:
         print("Patched LlamaRMSNorm")
 
-def patch_qwenvl(verbose: bool = False):
+def patch_qwenvl2_5(verbose: bool = False):
     if not getattr(modeling_qwen2_5_vl_kv_opt, "_lxt_attn_patched", False):
         success = patch_attention(modeling_qwen2_5_vl_kv_opt)
         setattr(modeling_qwen2_5_vl_kv_opt, "_lxt_attn_patched", True)
@@ -70,5 +69,6 @@ def patch_qwenvl(verbose: bool = False):
 
     if verbose and success:
         print("Patched Qwen2RMSNorm")
- 
+
+
   

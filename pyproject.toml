@@ -1,0 +1,23 @@
+[project]
+name = "speechlm-explainability"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = [
+	"numpy==1.25.2",
+	"pandas",
+	"nvitop",
+	"huggingface_hub",
+	"librosa",
+	"textgrid",
+	"lxt",
+	"wandb",
+	"datasets",
+	"qwen-vl-utils",
+	"pytorch-lightning",
+	"transformers==4.51.0",
+	"openai",
+	"tiktoken",
+	"transformers_stream_generator",
+	"einops",
+	"transformers_modules",
+]

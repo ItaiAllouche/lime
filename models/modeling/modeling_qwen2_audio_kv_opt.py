@@ -96,10 +96,10 @@ def eager_attention_forward(
     ########## itai change ##########
     # apply kv delts only on the relevant layers
     if layer_idx in desc.deltas_layers and desc.approach == 'opt':
-        modality_bos_idx = desc.modality_bos_idx
-        modality_eos_idx = desc.modality_eos_idx
         kv_deltas = desc.kv_deltas
         delta_k, delta_v = kv_deltas[layer_idx]
+        # delta_v = kv_deltas[layer_idx]
+        # delta_k = kv_deltas[layer_idx]
 
         delta_k_exp = delta_k.to(device=key_states.device, dtype=key_states.dtype)
         delta_v_exp = delta_v.to(device=value_states.device, dtype=value_states.dtype)
@@ -107,12 +107,9 @@ def eager_attention_forward(
         key_states = key_states.clone()
         value_states = value_states.clone()
 
-        key_states[:, :, :, :] += delta_k_exp #delta_k[:, :, :key_states.shape[2], :]
-        value_states[:, :, :, :] += delta_v_exp #delta_v[:, :, :key_states.shape[2], :]
-
         # apply deltas
-        # key_states[:, :, :, :] += delta_k_exp #delta_k[:, :, :key_states.shape[2], :]
-        # value_states[:, :, :, :] += delta_v_exp #delta_v[:, :, :key_states.shape[2], :]
+        key_states[:, :, :, :] += delta_k_exp
+        value_states[:, :, :, :] += delta_v_exp
     ########## itai change ##########
 
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling

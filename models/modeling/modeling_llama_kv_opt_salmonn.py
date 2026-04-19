@@ -17,11 +17,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-""" PyTorch LLaMA model with LXT support."""
+""" PyTorch LLaMA model."""
 import math
 from typing import List, Optional, Tuple, Union
-
 import copy ########## itai change ##########
+
 import torch
 import torch.utils.checkpoint
 from torch import nn
@@ -33,71 +33,13 @@ from transformers.modeling_utils import PreTrainedModel
 from transformers.utils import add_start_docstrings, add_start_docstrings_to_model_forward, logging, replace_return_docstrings
 from transformers.models.llama.configuration_llama import LlamaConfig
 
-#######################################################
-######################### LXT #########################
-#######################################################
-# Try to import LXT modules, fallback to standard operations if not available
-try:
-    from lxt.explicit.modules import RMSNormIdentity
-    import lxt.explicit.functional as lf
-    import lxt.explicit.modules as lm
-    import lxt.explicit.rules as rules
-    from lxt.explicit.core import Composite
-    LXT_AVAILABLE = False
-except ImportError:
-    LXT_AVAILABLE = False
-    # Create fallback implementations
-    class RMSNormIdentity:
-        pass
-    
-    class lf:
-        @staticmethod
-        def add2(a, b):
-            return a + b
-        
-        @staticmethod
-        def mul2(a, b):
-            return a * b
-        
-        @staticmethod
-        def matmul(a, b):
-            return torch.matmul(a, b)
-    
-    class lm:
-        LinearEpsilon = nn.Linear
-
-print(f'LXT_AVAILABLE: {LXT_AVAILABLE}')
-
-if LXT_AVAILABLE:
-    class ProjSiluMultiplication(nn.Module):
-        def forward(self, a, b):
-            return a * b
-    
-    class AttentionValueMatmul(nn.Module):
-        def forward(self, attn, value):
-            return torch.matmul(attn, value)
-
-    attnlrp = Composite({
-        nn.SiLU: rules.IdentityRule,
-        ProjSiluMultiplication: rules.UniformRule,
-        nn.Softmax: lm.SoftmaxDT,
-        AttentionValueMatmul: rules.UniformEpsilonRule,
-    })
-
-    cp_lrp = Composite({
-        nn.SiLU: rules.StopRelevanceRule,
-        ProjSiluMultiplication: rules.EpsilonRule,
-        nn.Softmax: rules.StopRelevanceRule,
-        AttentionValueMatmul: rules.EpsilonRule,
-    })
-
-###############################################################
-###############################################################
-###############################################################
+from ...descriptor import KVOptDesc
 
 logger = logging.get_logger(__name__)
 
 _CONFIG_FOR_DOC = "LlamaConfig"
+
+ALL_ATTENTION_FUNCTIONS = {} ########## itai change ##########
 
 
 # Copied from transformers.models.bart.modeling_bart._make_causal_mask
@@ -189,26 +131,16 @@ def rotate_half(x):
     """Rotates half the hidden dims of the input."""
     x1 = x[..., : x.shape[-1] // 2]
     x2 = x[..., x.shape[-1] // 2 :]
-    if LXT_AVAILABLE:
-        return torch.cat((lf.mul2(x2, -1), x1), dim=-1)
-    else:
-        return torch.cat((-x2, x1), dim=-1)
+    return torch.cat((-x2, x1), dim=-1)
 
 
 def apply_rotary_pos_emb(q, k, cos, sin, position_ids):
-    # Original implementation for compatibility
     gather_indices = position_ids[:, None, :, None]  # [bs, 1, seq_len, 1]
     gather_indices = gather_indices.repeat(1, cos.shape[1], 1, cos.shape[3])
     cos = torch.gather(cos.repeat(gather_indices.shape[0], 1, 1, 1), 2, gather_indices)
     sin = torch.gather(sin.repeat(gather_indices.shape[0], 1, 1, 1), 2, gather_indices)
-    
-    if LXT_AVAILABLE:
-        q_embed = lf.add2(lf.mul2(q, cos.detach()), lf.mul2(rotate_half(q), sin.detach()))
-        k_embed = lf.add2(lf.mul2(k, cos.detach()), lf.mul2(rotate_half(k), sin.detach()))
-    else:
-        q_embed = (q * cos) + (rotate_half(q) * sin)
-        k_embed = (k * cos) + (rotate_half(k) * sin)
-    
+    q_embed = (q * cos) + (rotate_half(q) * sin)
+    k_embed = (k * cos) + (rotate_half(k) * sin)
     return q_embed, k_embed
 
 
@@ -220,24 +152,81 @@ class LlamaMLP(nn.Module):
         hidden_act: str,
     ):
         super().__init__()
-        if LXT_AVAILABLE:
-            self.gate_proj = lm.LinearEpsilon(hidden_size, intermediate_size, bias=False)
-            self.down_proj = lm.LinearEpsilon(intermediate_size, hidden_size, bias=False)
-            self.up_proj = lm.LinearEpsilon(hidden_size, intermediate_size, bias=False)
-            self.act_fn = nn.SiLU(inplace=False)
-            self.proj_silu_mul = ProjSiluMultiplication()
-        else:
-            self.gate_proj = nn.Linear(hidden_size, intermediate_size, bias=False)
-            self.down_proj = nn.Linear(intermediate_size, hidden_size, bias=False)
-            self.up_proj = nn.Linear(hidden_size, intermediate_size, bias=False)
-            self.act_fn = ACT2FN[hidden_act]
+        self.gate_proj = nn.Linear(hidden_size, intermediate_size, bias=False)
+        self.down_proj = nn.Linear(intermediate_size, hidden_size, bias=False)
+        self.up_proj = nn.Linear(hidden_size, intermediate_size, bias=False)
+        self.act_fn = ACT2FN[hidden_act]
 
     def forward(self, x):
-        if LXT_AVAILABLE:
-            return self.down_proj(self.proj_silu_mul(self.act_fn(self.gate_proj(x)), self.up_proj(x)))
-        else:
-            return self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
+        return self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
 
+def eager_attention_forward(
+    module: nn.Module,    
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    bsz,
+    q_len,
+    kv_seq_len,
+    desc,
+    output_attentions: bool = False,
+    attention_mask: Optional[torch.Tensor] = None,
+):
+
+    ########## itai change ##########
+    # apply kv delts only on the relevant layers
+    if module.layer_idx in desc.deltas_layers and desc.approach == 'opt':
+        audio_bos = desc.modality_bos_idx
+        audio_eos = desc.modality_eos_idx
+        kv_deltas = desc.kv_deltas
+        delta_k, delta_v = kv_deltas[module.layer_idx]
+            
+        delta_k_exp = delta_k.to(device=key.device, dtype=key.dtype)
+        delta_v_exp = delta_v.to(device=value.device, dtype=value.dtype)
+
+        key = key.clone()
+        value = value.clone()
+
+        # apply deltas only on audio keys
+        key[:, :, :, :] += delta_k_exp
+        value[:, :, :, :] += delta_v_exp                
+    ########## itai change ##########
+
+    attn_weights = torch.matmul(query, key.transpose(2, 3)) / math.sqrt(module.head_dim)
+
+    if attn_weights.size() != (bsz, module.num_heads, q_len, kv_seq_len):
+        raise ValueError(
+            f"Attention weights should be of size {(bsz * module.num_heads, q_len, kv_seq_len)}, but is"
+            f" {attn_weights.size()}"
+        )
+
+    if attention_mask is not None:
+        if attention_mask.size() != (bsz, 1, q_len, kv_seq_len):
+            raise ValueError(
+                f"Attention mask should be of size {(bsz, 1, q_len, kv_seq_len)}, but is {attention_mask.size()}"
+            )
+        attn_weights = attn_weights + attention_mask
+        attn_weights = torch.max(attn_weights, torch.tensor(torch.finfo(attn_weights.dtype).min))
+
+    # upcast attention to fp32
+    attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
+    attn_output = torch.matmul(attn_weights, value)
+
+    if attn_output.size() != (bsz, module.num_heads, q_len, module.head_dim):
+        raise ValueError(
+            f"`attn_output` should be of size {(bsz, module.num_heads, q_len, module.head_dim)}, but is"
+            f" {attn_output.size()}"
+        )
+
+    attn_output = attn_output.transpose(1, 2)
+    attn_output = attn_output.reshape(bsz, q_len, module.hidden_size)
+
+    attn_output = module.o_proj(attn_output)
+
+    if not output_attentions:
+        attn_weights = None
+
+    return attn_output, attn_weights
 
 class LlamaAttention(nn.Module):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
@@ -256,20 +245,10 @@ class LlamaAttention(nn.Module):
                 f"hidden_size must be divisible by num_heads (got `hidden_size`: {self.hidden_size}"
                 f" and `num_heads`: {self.num_heads})."
             )
-        
-        if LXT_AVAILABLE:
-            self.q_proj = lm.LinearEpsilon(self.hidden_size, self.num_heads * self.head_dim, bias=False)
-            self.k_proj = lm.LinearEpsilon(self.hidden_size, self.num_heads * self.head_dim, bias=False)
-            self.v_proj = lm.LinearEpsilon(self.hidden_size, self.num_heads * self.head_dim, bias=False)
-            self.o_proj = lm.LinearEpsilon(self.num_heads * self.head_dim, self.hidden_size, bias=False)
-            self.softmax = nn.Softmax(dim=-1)
-            self.attn_value_matmul = AttentionValueMatmul()
-        else:
-            self.q_proj = nn.Linear(self.hidden_size, self.num_heads * self.head_dim, bias=False)
-            self.k_proj = nn.Linear(self.hidden_size, self.num_heads * self.head_dim, bias=False)
-            self.v_proj = nn.Linear(self.hidden_size, self.num_heads * self.head_dim, bias=False)
-            self.o_proj = nn.Linear(self.num_heads * self.head_dim, self.hidden_size, bias=False)
-        
+        self.q_proj = nn.Linear(self.hidden_size, self.num_heads * self.head_dim, bias=False)
+        self.k_proj = nn.Linear(self.hidden_size, self.num_heads * self.head_dim, bias=False)
+        self.v_proj = nn.Linear(self.hidden_size, self.num_heads * self.head_dim, bias=False)
+        self.o_proj = nn.Linear(self.num_heads * self.head_dim, self.hidden_size, bias=False)
         self.rotary_emb = LlamaRotaryEmbedding(self.head_dim, max_position_embeddings=self.max_position_embeddings)
 
     def _shape(self, tensor: torch.Tensor, seq_len: int, bsz: int):
@@ -305,68 +284,18 @@ class LlamaAttention(nn.Module):
 
         past_key_value = (key_states, value_states) if use_cache else None
 
-        if LXT_AVAILABLE:
-            scale = torch.tensor(1/math.sqrt(self.head_dim), dtype=query_states.dtype, device=query_states.device)
-
-            ########## itai change ##########
-            # apply kv delts only on the relevant layers
-            if self.layer_idx in desc.deltas_layers and desc.approach == 'opt':
-                audio_bos = desc.audio_bos_idx
-                audio_eos = desc.audio_eos_idx
-                kv_deltas = desc.kv_deltas
-                delta_k, delta_v = kv_deltas[self.layer_idx]
-                # delta_k = delta_k.clone()
-                # delta_v = delta_v.clone()                
-                delta_k_exp = delta_k.to(device=key_states.device, dtype=key_states.dtype)
-                delta_v_exp = delta_v.to(device=value_states.device, dtype=value_states.dtype)
-
-                # apply deltas only on audio keys
-                key_states[:, :, audio_bos:audio_eos+1, :] += delta_k_exp
-                value_states[:, :, audio_bos:audio_eos+1, :] += delta_v_exp                
-            ########## itai change ##########
-        
-            attn_weights = lf.mul2(lf.matmul(query_states, key_states.transpose(2, 3)), scale)
-        else:
-            attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) / math.sqrt(self.head_dim)
-
-        if attn_weights.size() != (bsz, self.num_heads, q_len, kv_seq_len):
-            raise ValueError(
-                f"Attention weights should be of size {(bsz * self.num_heads, q_len, kv_seq_len)}, but is"
-                f" {attn_weights.size()}"
-            )
-
-        if attention_mask is not None:
-            if attention_mask.size() != (bsz, 1, q_len, kv_seq_len):
-                raise ValueError(
-                    f"Attention mask should be of size {(bsz, 1, q_len, kv_seq_len)}, but is {attention_mask.size()}"
-                )
-            if LXT_AVAILABLE:
-                attn_weights = lf.add2(attn_weights, attention_mask)
-            else:
-                attn_weights = attn_weights + attention_mask
-                attn_weights = torch.max(attn_weights, torch.tensor(torch.finfo(attn_weights.dtype).min))
-
-        # upcast attention to fp32
-        if LXT_AVAILABLE:
-            attn_weights = self.softmax(attn_weights.float()).to(query_states.dtype)
-            attn_output = self.attn_value_matmul(attn_weights, value_states)
-        else:
-            attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
-            attn_output = torch.matmul(attn_weights, value_states)
-
-        if attn_output.size() != (bsz, self.num_heads, q_len, self.head_dim):
-            raise ValueError(
-                f"`attn_output` should be of size {(bsz, self.num_heads, q_len, self.head_dim)}, but is"
-                f" {attn_output.size()}"
-            )
-
-        attn_output = attn_output.transpose(1, 2)
-        attn_output = attn_output.reshape(bsz, q_len, self.hidden_size)
-
-        attn_output = self.o_proj(attn_output)
-
-        if not output_attentions:
-            attn_weights = None
+        attn_output, attn_weights = eager_attention_forward(
+            module=self,
+            desc=desc,
+            query=query_states,
+            key=key_states,
+            value=value_states,
+            bsz=bsz,
+            q_len=q_len,
+            kv_seq_len=kv_seq_len,
+            output_attentions=output_attentions,
+            attention_mask=attention_mask
+        )
 
         return attn_output, attn_weights, past_key_value
 
@@ -381,17 +310,12 @@ class LlamaDecoderLayer(nn.Module):
             intermediate_size=config.intermediate_size,
             hidden_act=config.hidden_act,
         )
-
-        if LXT_AVAILABLE and hasattr(RMSNormIdentity, '__bases__'):
-            self.input_layernorm = RMSNormIdentity(config.hidden_size, eps=config.rms_norm_eps)
-            self.post_attention_layernorm = RMSNormIdentity(config.hidden_size, eps=config.rms_norm_eps)
-        else:
-            self.input_layernorm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-            self.post_attention_layernorm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.input_layernorm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.post_attention_layernorm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
     def forward(
         self,
-        desc, #####itai######
+        desc, ########## itai change ##########
         hidden_states: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
@@ -427,21 +351,13 @@ class LlamaDecoderLayer(nn.Module):
             output_attentions=output_attentions,
             use_cache=use_cache,
         )
-        
-        if LXT_AVAILABLE:
-            hidden_states = lf.add2(residual, hidden_states)
-        else:
-            hidden_states = residual + hidden_states
+        hidden_states = residual + hidden_states
 
         # Fully Connected
         residual = hidden_states
         hidden_states = self.post_attention_layernorm(hidden_states)
         hidden_states = self.mlp(hidden_states)
-        
-        if LXT_AVAILABLE:
-            hidden_states = lf.add2(residual, hidden_states)
-        else:
-            hidden_states = residual + hidden_states
+        hidden_states = residual + hidden_states
 
         outputs = (hidden_states,)
 
@@ -484,7 +400,7 @@ class LlamaPreTrainedModel(PreTrainedModel):
 
     def _init_weights(self, module):
         std = self.config.initializer_range
-        if isinstance(module, nn.Linear) or (LXT_AVAILABLE and isinstance(module, lm.LinearEpsilon)):
+        if isinstance(module, nn.Linear):
             module.weight.data.normal_(mean=0.0, std=std)
             if module.bias is not None:
                 module.bias.data.zero_()
@@ -581,11 +497,7 @@ class LlamaModel(LlamaPreTrainedModel):
 
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
         self.layers = nn.ModuleList([LlamaDecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)])
-        
-        if LXT_AVAILABLE and hasattr(RMSNormIdentity, '__bases__'):
-            self.norm = RMSNormIdentity(config.hidden_size, eps=config.rms_norm_eps)
-        else:
-            self.norm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.norm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
         self.gradient_checkpointing = False
         # Initialize weights and apply final processing
@@ -671,11 +583,6 @@ class LlamaModel(LlamaPreTrainedModel):
 
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
-        else:
-            # When inputs_embeds is provided externally (e.g., from Qformer), ensure dtype matches
-            if inputs_embeds.dtype != self.embed_tokens.weight.dtype:
-                inputs_embeds = inputs_embeds.to(self.embed_tokens.weight.dtype)
-
         # embed positions
         if attention_mask is None:
             attention_mask = torch.ones(
@@ -763,17 +670,15 @@ class LlamaForCausalLM(LlamaPreTrainedModel):
         self.model = LlamaModel(config)
 
         ########## itai change ##########
+        self.reference_model = copy.deepcopy(self.model)
         # self.reference_model = LlamaModel(config)
         # self.reference_model.load_state_dict(self.model.state_dict())
-        # self.reference_model.eval()
-        # for p in self.reference_model.parameters():
-        #     p.requires_grad = False
-        ########## itai change ##########   
+        self.reference_model.eval()
+        for p in self.reference_model.parameters():
+            p.requires_grad = False
+        ########## itai change ##########           
 
-        if LXT_AVAILABLE:
-            self.lm_head = lm.LinearEpsilon(config.hidden_size, config.vocab_size, bias=False)
-        else:
-            self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+        self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
 
         # Initialize weights and apply final processing
         self.post_init()
@@ -847,50 +752,73 @@ class LlamaForCausalLM(LlamaPreTrainedModel):
         # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
         print('student forward...')
         outputs = self.model(
+            desc=desc,
             input_ids=input_ids,
             attention_mask=attention_mask,
             position_ids=position_ids,
             past_key_values=past_key_values,
             inputs_embeds=inputs_embeds,
-            use_cache=False, # to avoid interactions with past keys and values
+            use_cache=use_cache,
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
-            desc=desc,
         )
 
         hidden_states = outputs[0]
         logits = self.lm_head(hidden_states)
-
         loss = None
 
         ########## itai change ##########
-        # if desc.approach == 'opt':
-        #     if desc.reference_logits is None:
+        if desc.approach == 'opt':
+            if desc.reference_logits is None:
 
-        #         reference_desc = copy.deepcopy(desc)
-        #         reference_desc.approach = 'vanila'
+                reference_desc = KVOptDesc(
+                    deltas_layers=desc.deltas_layers,
+                    lambda_kl=desc.lambda_kl,
+                    approach='vanila',
+                    modality_bos_idx=desc.modality_bos_idx,
+                    modality_eos_idx=desc.modality_eos_idx,
+                    prompt_len=desc.prompt_len,
+                )
         
-        #         # forward of the reference model
-        #         print('reference forward...')
-        #         with torch.no_grad():
-        #             reference_outputs = self.reference_model(
-        #                 input_ids=input_ids,
-        #                 attention_mask=attention_mask,
-        #                 position_ids=position_ids,
-        #                 past_key_values=past_key_values,
-        #                 inputs_embeds=inputs_embeds,
-        #                 use_cache=False,
-        #                 output_attentions=output_attentions,
-        #                 output_hidden_states=output_hidden_states,
-        #                 return_dict=return_dict,
-        #                 desc=reference_desc,
-        #             )
+                # forward of the reference model
+                print('reference forward...')
+                with torch.no_grad():
+                    reference_outputs = self.reference_model(
+                        desc=reference_desc,
+                        input_ids=input_ids,
+                        attention_mask=attention_mask,
+                        position_ids=position_ids,
+                        past_key_values=past_key_values,
+                        inputs_embeds=inputs_embeds,
+                        use_cache=False,
+                        output_attentions=output_attentions,
+                        output_hidden_states=output_hidden_states,
+                        return_dict=return_dict,
+                    )
 
-        #         desc.set_reference_logits(self.lm_head(reference_outputs[0]))
+                desc.set_reference_logits(self.lm_head(reference_outputs[0]))
+
+            assert desc.reference_logits is not None, 'reference logits in None'
+            reference_logits = desc.reference_logits
+
+            # KL with resppect to the last toekn
+            last_idx = attention_mask.long().sum(dim=1) - 1
+            student_last = logits[torch.arange(logits.size(0), device=logits.device), last_idx, :]
+            reference_last = reference_logits[torch.arange(reference_logits.size(0), device=reference_logits.device), last_idx, :]            
+
+            student_log_probs = nn.functional.log_softmax(student_last, dim=-1)
+            reference_probs = nn.functional.softmax(reference_last, dim=-1)
+            
+            kl_loss = nn.functional.kl_div(
+                student_log_probs,
+                reference_probs,
+                reduction="batchmean",
+                log_target=False
+            )
+            desc.set_kl_loss(kl_loss)
         ########## itai change ##########     
 
-        # we dont enter here since we are only working on inference
         if labels is not None:
             # Shift so that tokens < n predict n
             shift_logits = logits[..., :-1, :].contiguous()

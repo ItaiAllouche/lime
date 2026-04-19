@@ -4,19 +4,20 @@ import torch.nn as nn
 from transformers import Qwen2_5_VLForConditionalGeneration, AutoTokenizer, AutoProcessor
 from typing import Literal
 import copy
+import gc
 
 from ...descriptor import KVOptDesc
 from .modeling_qwen2_5_vl_kv_opt import Qwen2_5_VLForConditionalGenerationKVOpt, Qwen2_5_VLModel
 
 import sys
 sys.path.append('/app/dev/')
-from lrp.patches import patch_qwenvl
-from plot import plot_relevance
+from lrp.patches import patch_qwenvl2_5
+# from plot import plot_relevance
 from utils import compare_model_to_reference
 
 QWEN_2_5_VL_ID = "Qwen/Qwen2.5-VL-7B-Instruct"
 
-class QwenVL(nn.Module):
+class QwenVL2_5(nn.Module):
     def __init__(
         self,
     ):
@@ -95,10 +96,10 @@ class QwenVL(nn.Module):
 
         return response            
 
-class QwenVLKVOpt(nn.Module):
+class QwenVL2_5KVOpt(nn.Module):
     def __init__(
         self,
-        verbose: bool = False
+        verbose: bool = True
     ):
         super().__init__()
         self.model = Qwen2_5_VLForConditionalGenerationKVOpt.from_pretrained(
@@ -114,10 +115,10 @@ class QwenVLKVOpt(nn.Module):
         self.model.model.load_state_dict(original_lm.state_dict(), strict=False)
 
         # # Create reference model AFTER loading weights
-        # self.model.reference_model = copy.deepcopy(self.model.model)
-        # self.model.reference_model.eval()
-        # for p in self.model.reference_model.parameters():
-        #     p.requires_grad = False
+        self.model.reference_model = copy.deepcopy(self.model.model)
+        self.model.reference_model.eval()
+        for p in self.model.reference_model.parameters():
+            p.requires_grad = False
 
         # freeze parameters
         for p in self.model.parameters():
@@ -126,10 +127,10 @@ class QwenVLKVOpt(nn.Module):
         self.processor = AutoProcessor.from_pretrained(QWEN_2_5_VL_ID)
 
         # lrp patching
-        # patch_qwenvl(verbose)
+        patch_qwenvl2_5(verbose)
 
         # validate equality of between model and reference model
-        # compare_model_to_reference(self.model.model)    
+        compare_model_to_reference(self.model)
 
     def get_inputs_for_forward(
         self,
@@ -170,7 +171,7 @@ class QwenVLKVOpt(nn.Module):
         self,
         inputs: dict,
         desc: KVOptDesc, 
-        position_ids
+        position_ids=None
     ):
         model = self.model
         
@@ -191,7 +192,6 @@ class QwenVLKVOpt(nn.Module):
             **inputs,
             use_cache=False,
             output_attentions=False,
-            position_ids=position_ids,
             desc=desc
         )
 
@@ -277,15 +277,11 @@ class QwenVLKVOpt(nn.Module):
         opt_steps: int = 3,
         opt_lr: int = 3e-2,
         lambda_kl: float = 1,
-        lambda_relevance_multimodal: float = 0.7,
-        lambda_relevance_text: float = 0.7,
         deltas_layers: list = list(range(0,28)), # qwen2_5VL has 28 decoder layers
-        example: str = '',
         max_new_tokens: int = 50, 
         plot: bool = False            
     ):
-        if plot:
-            relevances = []
+        relevances = []
         
         device = next(self.model.parameters()).device
         inputs = {k: v.to(device) if hasattr(v, 'to') else v for k, v in inputs.items()}
@@ -333,7 +329,7 @@ class QwenVLKVOpt(nn.Module):
 
         self.model.eval()
 
-        # adam optimizer for deltas kv tuning
+        # adam optimizer for deltas KV tuning
         optimizer = torch.optim.Adam(delta_params, lr=opt_lr)
 
         # parameters for generation
@@ -345,15 +341,13 @@ class QwenVLKVOpt(nn.Module):
 
         # initilize KVOpt description
         desc = KVOptDesc(
-                    deltas_layers=deltas_layers,
-                    lambda_kl=lambda_kl,
-                    lambda_relevance_multimodal=lambda_relevance_multimodal,
-                    lambda_relevance_text=lambda_relevance_text,
-                    approach=approach,
-                    modality_bos_idx=modality_bos_idx,
-                    modality_eos_idx=modality_eos_idx,
-                    prompt_len=T,
-                )
+            deltas_layers=deltas_layers,
+            lambda_kl=lambda_kl,
+            approach=approach,
+            modality_bos_idx=modality_bos_idx,
+            modality_eos_idx=modality_eos_idx,
+            prompt_len=T,
+        )
         desc.set_kv_deltas(kv_deltas)
         desc.set_reference_logits(None)
         
@@ -381,9 +375,12 @@ class QwenVLKVOpt(nn.Module):
                     print(f'Adam step: {opt_step}')
                     
                     # compute relevance using LRP
-                    outputs, stash = self._outputs_for_relevance(model_inputs, desc, position_ids)
-                    # kl_loss = desc.kl_loss
-                    kl_loss = 0
+                    outputs, stash = self._outputs_for_relevance(
+                        inputs=model_inputs,
+                        desc=desc, 
+                        # position_ids=position_ids
+                    )
+                    kl_loss = desc.kl_loss
 
                     assert kl_loss is not None, "KL loss is None when approach='opt'."
 
@@ -393,7 +390,8 @@ class QwenVLKVOpt(nn.Module):
                     with torch.no_grad():
                         next_token = self._decode(
                             outputs.logits,
-                            input_ids, do_sample,
+                            input_ids,
+                            do_sample,
                             temperature,
                             repetition_penalty,
                             top_k,
@@ -414,25 +412,15 @@ class QwenVLKVOpt(nn.Module):
                         allow_unused=False,
                     )[0]        
 
-                    # token-level relevance as grad * input, normalized to [0, 1]
-                    # relevance = (grad_merged.detach()[0] * merged[0]).sum(-1)
+                    # token-level relevance as grad * input
                     relevance = (grad_merged[0] * merged[0]).sum(-1)
-                    image_relevance = relevance[desc.modality_bos_idx:desc.modality_eos_idx+1]
-                    text_relevance = torch.cat((relevance[:desc.modality_bos_idx], relevance[desc.modality_eos_idx+1:]))
-                    # audio_relevance = audio_relevance / (audio_relevance.abs().max().detach() + 1e-12)
-                    # audio_relevance = (audio_relevance + 1) / 2
-                    # audio_relevance = audio_relevance.mean()
-                    image_relevance = image_relevance.abs().sum()
-                    text_relevance = text_relevance.abs().sum()
-                    image_relevance = image_relevance / (relevance.abs().sum() + 1e-12)
-                    text_relevance = text_relevance / (relevance.abs().sum() + 1e-12)
- 
-                    # audio_relevance = relevance[desc.modality_bos_idx:desc.modality_eos_idx+1].mean()
+                    tau = 0.1
 
-                    loss = lambda_kl * kl_loss - lambda_relevance_multimodal * image_relevance + lambda_relevance_text * text_relevance
-                    # print(f'KL: {kl_loss.item():.4f} | Relevance: {float(image_relevance):.4f} | Overall loss: {loss.item():.4f}')
-                    print(f'KL: {kl_loss} | Image Relevance: {float(image_relevance):.4f} | Text Relevance: {float(text_relevance):.4f} | Image/Text:  {(float(image_relevance)/float(text_relevance)):.4f} |Overall loss: {loss.item():.4f}')
-                    print(f'λ_kl X kl: {float(lambda_kl * kl_loss):.4f} | λ_relevance_image X relevance_image: {float(lambda_relevance_multimodal * image_relevance):.4f} | λ_relevance_text X text_relevance: {float(lambda_relevance_text * text_relevance):.4f}')
+                    log_probs = nn.functional.log_softmax(relevance / tau, dim=-1)
+                    relevance_loss = - (log_probs[desc.modality_bos_idx:desc.modality_eos_idx+1].mean())
+                    loss = lambda_kl * kl_loss + relevance_loss
+
+                    print(f'KL: {kl_loss.item():.4f} | Image Relevance: {float(-relevance_loss):.4f} | Overall loss: {loss.item():.4f}')
                     
                     loss.backward()
                     optimizer.step()
@@ -442,7 +430,7 @@ class QwenVLKVOpt(nn.Module):
                     outputs = self.model(
                         **model_inputs,
                         use_cache=True,
-                        position_ids=position_ids,
+                        # position_ids=position_ids,
                         desc=desc
                     )
 
@@ -458,30 +446,6 @@ class QwenVLKVOpt(nn.Module):
                     top_p
                 )
 
-            # here we do another forward pass to calculate the lrp relevance
-            if plot:
-                plot_outputs, plot_stash = self._outputs_for_relevance(model_inputs, desc, position_ids)
-                nonpad_idx = torch.where(model_inputs['attention_mask'][0].to(torch.bool))[0].tolist()
-                target_pos = nonpad_idx[-1] # last non-padded token                
-                next_id = int(next_token[0, 0].item())
-                target_logit = plot_outputs.logits[0, target_pos, next_id]
-
-                merged = plot_stash["merged"]
-
-                grad_merged = torch.autograd.grad(
-                    outputs=target_logit,
-                    inputs=merged,
-                    retain_graph=False,
-                    create_graph=False,
-                    allow_unused=False,
-                )[0]        
-
-                # token-level relevance as grad * input, normalized to [-1, 1]
-                relevance = (grad_merged.detach()[0] * merged[0]).sum(-1)
-                relevance = relevance / (relevance.abs().max().detach() + 1e-12)
-                relevances.append(relevance.detach().to(torch.float32).cpu().numpy())
-                plot_relevance(relevances, desc.modality_bos_idx, desc.modality_eos_idx+1, f'qwenvl/{example}')
-
             input_ids = torch.cat([input_ids, next_token], dim=1)
 
             # early stop if EOS everywhere
@@ -491,14 +455,30 @@ class QwenVLKVOpt(nn.Module):
 
             # decode current answer
             answer_ids = input_ids[:, T:]
-            decoded_answer = self.processor.batch_decode(answer_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]            
+            decoded_answer = self.processor.batch_decode(
+                answer_ids,
+                skip_special_tokens=True,
+                clean_up_tokenization_spaces=False
+            )[0]            
 
             if plot:
                 print(f"Partial answer: {decoded_answer}")
                 print(f'---------------------')
 
-            # resets for next token generation
+            # cleanup
             desc.set_reference_logits(None)
+            desc.kv_deltas_cleanup()
+            kv_deltas.clear()
+            delta_params.clear()
+
+            optimizer.zero_grad(set_to_none=True)
+            optimizer.state.clear()
+
+            del optimizer
+            gc.collect()
+            torch.cuda.empty_cache()
+
+            # initilaize kv deltas
             kv_deltas = {}
             delta_params = []
             for layer_idx in deltas_layers:
@@ -520,12 +500,17 @@ class QwenVLKVOpt(nn.Module):
                 )            
                 kv_deltas[layer_idx] = (delta_k, delta_v)
                 delta_params.extend([delta_k, delta_v])
+    
             optimizer = torch.optim.Adam(delta_params, lr=opt_lr)
             desc.set_kv_deltas(kv_deltas)
 
         # parse output
         gen_ids = input_ids[:, T:]
-        response = self.processor.batch_decode(gen_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
+        response = self.processor.batch_decode(
+            gen_ids,
+            skip_special_tokens=True,
+            clean_up_tokenization_spaces=False
+        )[0]
 
         if plot:
             print(f'\nTokens: {tokens}')

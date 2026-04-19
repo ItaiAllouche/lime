@@ -104,3 +104,54 @@ def compare_model_to_reference(model):
     ref_requires_grad = [p.requires_grad for p in model.reference_model.parameters()]
     print(f"All reference params frozen: {not any(ref_requires_grad)}")
     print(f"Reference model in eval mode: {not model.reference_model.training}")
+
+def compare_model_to_reference_qwenvl(model):
+    """
+    Compare QwenVLKVOpt model.transformer with model.reference_transformer.
+    Similar to compare_model_to_reference but for models using transformer attribute.
+    """
+    print("\n=== Weight Comparison (QwenVL) ===")
+    for name, param in model.transformer.named_parameters():
+        ref_param = dict(model.reference_transformer.named_parameters())[name]
+        are_equal = torch.allclose(param, ref_param, rtol=1e-5, atol=1e-8)
+        print(f"{name}: {'✓ Equal' if are_equal else '✗ Different'}")
+        if not are_equal:
+            print(f"  Max diff: {(param - ref_param).abs().max().item()}")
+        # Only check first 5 for quick verification
+        if list(model.transformer.named_parameters()).index((name, param)) >= 4:
+            print("... (showing first 5, all others follow same pattern)")
+            break
+
+    # Method 2: Comprehensive check - verify all parameters match
+    print("\n=== Comprehensive Check (QwenVL) ===")
+    all_match = True
+    mismatch_count = 0
+    total_params = 0
+
+    for (name, param), (ref_name, ref_param) in zip(
+        model.transformer.named_parameters(),
+        model.reference_transformer.named_parameters()
+    ):
+        total_params += 1
+        if name != ref_name:
+            print(f"✗ Name mismatch: {name} vs {ref_name}")
+            all_match = False
+            mismatch_count += 1
+            continue
+        
+        if not torch.equal(param, ref_param):
+            if not torch.allclose(param, ref_param, rtol=1e-5, atol=1e-8):
+                print(f"✗ Weights differ for {name}")
+                print(f"  Max absolute difference: {(param - ref_param).abs().max().item()}")
+                all_match = False
+                mismatch_count += 1
+
+    print(f"\nTotal parameters checked: {total_params}")
+    print(f"Mismatches: {mismatch_count}")
+    print(f"Result: {'✓ All weights match!' if all_match else '✗ Some weights differ'}")
+
+    # Method 3: Verify reference model is frozen
+    print("\n=== Reference Transformer Frozen Check (QwenVL) ===")
+    ref_requires_grad = [p.requires_grad for p in model.reference_transformer.parameters()]
+    print(f"All reference params frozen: {not any(ref_requires_grad)}")
+    print(f"Reference transformer in eval mode: {not model.reference_transformer.training}")
