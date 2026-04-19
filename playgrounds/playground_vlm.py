@@ -17,7 +17,7 @@ if len(sys.argv) > 1 and '--model' in sys.argv:
             model = AutoModelForCausalLM.from_pretrained("Qwen/Qwen-VL-Chat", device_map="cuda", trust_remote_code=True)
             del model, tokenizer
         except Exception as e:
-            print(f"Warning: Could not cache Qwen model: {e}")
+            pass
 
 from models.qwenvl2_5 import QwenVL2_5LIME
 from models.qwenvl import QwenVLLIME
