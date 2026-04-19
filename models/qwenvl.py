@@ -181,6 +181,8 @@ class QwenVLLIME(nn.Module):
     ):
         relevances = [] if output_relevance else None
         
+        print(f'Start generate response with:\nopt_steps={opt_steps} | opt_lr={opt_lr} | lambda_kl={lambda_kl}')
+
         device = next(self.model.parameters()).device
 
         generation_config = self.model.generation_config

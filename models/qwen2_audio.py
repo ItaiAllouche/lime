@@ -187,6 +187,8 @@ class Qwen2AudioLIME(nn.Module):
     ):    
         relevances = [] if output_relevance else None
         
+        print(f'Start generate response with:\nopt_steps={opt_steps} | opt_lr={opt_lr} | lambda_kl={lambda_kl}')
+
         device = next(self.model.parameters()).device
         inputs = {k: v.to(device) if hasattr(v, 'to') else v for k, v in inputs.items()}
         input_ids = inputs["input_ids"].to(device) 
