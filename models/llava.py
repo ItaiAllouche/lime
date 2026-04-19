@@ -258,7 +258,7 @@ class LlavaLIME(nn.Module):
         top_k = self.model.language_model.config.top_k if hasattr(self.model.language_model.config, 'top_k') else 0
         top_p = self.model.language_model.config.top_p if hasattr(self.model.language_model.config, 'top_p') else 1.0
 
-        # initialize KVOpt description
+        # initilize descriptor
         desc = LimeDesc(
                     deltas_layers=deltas_layers,
                     lambda_kl=lambda_kl,
@@ -426,7 +426,6 @@ class LlavaLIME(nn.Module):
         generated_tokens = self.processor.tokenizer.convert_ids_to_tokens(generated_token_ids)
 
         if plot:
-            print(f'\nTokens: {tokens}')
             print(f"Model's output: {response}" )
 
         output = {

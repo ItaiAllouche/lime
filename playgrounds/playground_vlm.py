@@ -2,16 +2,14 @@ import torch
 import argparse
 from utils import clean_gpu_cache
 
-import sys
-sys.path.append('/app/dev/')
-from models.qwenvl2_5 import QwenVL2_5KVOpt
-from models.qwenvl import QwenVLKVOpt
-from models.llava import LlavaKVOpt   
+from models.qwenvl2_5 import QwenVL2_5LIME
+from models.qwenvl import QwenVLLIME
+from models.llava import LlavaLIME  
 
 MODELS_DICT = {
-    'qwenvl2_5': QwenVL2_5KVOpt,
-    'qwenvl': QwenVLKVOpt,
-    'llava': LlavaKVOpt,
+    'qwenvl2_5': QwenVL2_5LIME,
+    'qwenvl': QwenVLLIME,
+    'llava': LlavaLIME,
 }
 
 def main(args):

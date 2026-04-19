@@ -7,7 +7,7 @@ import copy
 import gc
 
 from descriptor import LimeDesc
-from modeling.modeling_qwen2_5_vl_lime import Qwen2_5_VLForConditionalGenerationKVOpt, Qwen2_5_VLModel
+from modeling.modeling_qwen2_5_vl_lime import Qwen2_5_VLForConditionalGeneration, Qwen2_5_VLModel
 from lrp.patches import patch_qwenvl2_5
 from utils import compare_model_to_reference
 
@@ -18,7 +18,7 @@ class QwenVL2_5LIME(nn.Module):
         verbose: bool = True
     ):
         super().__init__()
-        self.model = Qwen2_5_VLForConditionalGenerationKVOpt.from_pretrained(
+        self.model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
             QWEN_2_5_VL_ID,
             attn_implementation="eager",
         )

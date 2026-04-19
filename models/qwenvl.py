@@ -1,29 +1,21 @@
-from transformers import AutoTokenizer #AutoModelForCausalLM, 
-# from transformers.generation import GenerationConfig
+from transformers import AutoTokenizer
 import torch
 import torch.nn as nn
-from typing import Literal
 import gc
 import copy
 
-from ...descriptor import KVOptDesc
-from .modeling_qwen import QWenLMHeadModel
-from .modeling_qwen_kv_opt import QWenLMHeadModel as QWenLMHeadModelKVOpt
-from .modeling_qwen_kv_opt import make_context, get_stop_words_ids, decode_tokens#, QWenModel,
-
-import sys
-sys.path.append('/app/dev/')
-
+from descriptor import LimeDesc
+from modeling.modeling_qwen_lime import QWenLMHeadModel, make_context, get_stop_words_ids, decode_tokens
 from lrp.patch_qwenvl import patch_qwenvl
 from utils import compare_model_to_reference_qwenvl
 
-torch.manual_seed(1234)
+torch.manual_seed(42)
 
 QWEN_VL_ID = "Qwen/Qwen-VL-Chat"
-
-class QwenVL(nn.Module):
+class QwenVLLIME(nn.Module):
     def __init__(
         self,
+        verbose: bool = True
     ):
         super().__init__()
 
@@ -34,61 +26,7 @@ class QwenVL(nn.Module):
             attn_implementation="eager",
         )
 
-        # freeze parameters
-        for p in self.model.parameters():
-            p.requires_grad = False
-
-    def get_inputs_for_forward(
-        self,
-        instruction: str,
-        image_path: str,
-        device_num: int = 0
-    ):
-        query = self.tokenizer.from_list_format([
-            {'image': image_path},
-            {'text': instruction},
-        ])
-
-        return query
-    
-    def generate(
-        self,
-        inputs: str,
-        max_new_tokens: int = 120,
-        plot: bool = False        
-    ):
-        response, _ = self.model.chat(
-            self.tokenizer,
-            query=inputs,
-            history=None,
-            max_new_tokens=max_new_tokens
-        )
-
-        if plot:
-            print(f"Model's output: {response}" )
-
-        return response
-
-class QwenVLKVOpt(nn.Module):
-    def __init__(
-        self,
-        verbose: bool = True
-    ):
-        super().__init__()
-
-        self.tokenizer = AutoTokenizer.from_pretrained(QWEN_VL_ID, trust_remote_code=True)
-        self.model = QWenLMHeadModelKVOpt.from_pretrained(
-            QWEN_VL_ID,
-            trust_remote_code=True,
-            attn_implementation="eager",
-        )
-
-        # replace the language model with the custom one
-        # original_lm = self.model.transformer
-        # self.model.transformer = QWenModel(original_lm.config)
-        # self.model.transformer.load_state_dict(original_lm.state_dict(), strict=False)
-
-        # # Create reference model AFTER loading weights
+        # # create reference model AFTER loading weights
         self.model.reference_transformer = copy.deepcopy(self.model.transformer)
         self.model.reference_transformer.eval()
 
@@ -126,7 +64,7 @@ class QwenVLKVOpt(nn.Module):
     def _outputs_for_relevance(
         self,
         inputs: dict,
-        desc: KVOptDesc,
+        desc: LimeDesc,
         position_ids
     ):
         model = self.model
@@ -229,7 +167,6 @@ class QwenVLKVOpt(nn.Module):
     def generate(
         self,
         inputs: str,
-        approach: Literal['opt', 'vanila'], 
         opt_steps: int = 3,
         opt_lr: float = 3e-2,
         lambda_kl: float = 1,
@@ -317,10 +254,10 @@ class QwenVLKVOpt(nn.Module):
         top_p = getattr(generation_config, 'top_p', 1.0) if do_sample else 1.0
 
         # Initialize KVOpt description
-        desc = KVOptDesc(
+        desc = LimeDesc(
             deltas_layers=deltas_layers,
             lambda_kl=lambda_kl,
-            approach=approach,
+            approach='opt',
             modality_bos_idx=modality_bos_idx,
             modality_eos_idx=modality_eos_idx,
             prompt_len=T,
@@ -349,66 +286,56 @@ class QwenVLKVOpt(nn.Module):
                 # Forward + optimization step
                 optimizer.zero_grad()
 
-                if approach == 'opt':
-                    print(f'Adam step: {opt_step}')
-                    
-                    # Compute relevance using LRP
-                    outputs, stash = self._outputs_for_relevance(
-                        inputs=model_inputs,
-                        desc=desc, 
-                        position_ids=position_ids
+                print(f'Adam step: {opt_step}')
+                
+                # Compute relevance using LRP
+                outputs, stash = self._outputs_for_relevance(
+                    inputs=model_inputs,
+                    desc=desc, 
+                    position_ids=position_ids
+                )
+                kl_loss = desc.kl_loss
+
+                assert kl_loss is not None, "KL loss is None"
+
+                nonpad_idx = torch.where(model_inputs['attention_mask'][0].to(torch.bool))[0].tolist()
+                target_pos = nonpad_idx[-1]  # last non-padded token
+
+                with torch.no_grad():
+                    next_token = self._decode(
+                        outputs.logits,
+                        input_ids,
+                        do_sample,
+                        temperature,
+                        repetition_penalty,
+                        top_k,
+                        top_p
                     )
-                    kl_loss = desc.kl_loss
 
-                    assert kl_loss is not None, "KL loss is None when approach='opt'."
+                # next predicted token id at that position (for batch 0)
+                next_id = int(next_token[0, 0].item())
+                target_logit = outputs.logits[0, target_pos, next_id]
+                merged = stash["merged"]
 
-                    nonpad_idx = torch.where(model_inputs['attention_mask'][0].to(torch.bool))[0].tolist()
-                    target_pos = nonpad_idx[-1]  # last non-padded token
+                grad_merged = torch.autograd.grad(
+                    outputs=target_logit,
+                    inputs=merged,
+                    create_graph=True,
+                    allow_unused=False,
+                )[0]        
 
-                    with torch.no_grad():
-                        next_token = self._decode(
-                            outputs.logits,
-                            input_ids,
-                            do_sample,
-                            temperature,
-                            repetition_penalty,
-                            top_k,
-                            top_p
-                        )
+                # Token-level relevance as grad * input
+                relevance = (grad_merged[0] * merged[0]).sum(-1)
+                tau = 0.1
 
-                    # next predicted token id at that position (for batch 0)
-                    next_id = int(next_token[0, 0].item())
-                    target_logit = outputs.logits[0, target_pos, next_id]
-                    merged = stash["merged"]
+                log_probs = nn.functional.log_softmax(relevance / tau, dim=-1)
+                relevance_loss = -(log_probs[desc.modality_bos_idx:desc.modality_eos_idx+1].mean())
+                loss = lambda_kl * kl_loss + relevance_loss
 
-                    grad_merged = torch.autograd.grad(
-                        outputs=target_logit,
-                        inputs=merged,
-                        create_graph=True,
-                        allow_unused=False,
-                    )[0]        
-
-                    # Token-level relevance as grad * input
-                    relevance = (grad_merged[0] * merged[0]).sum(-1)
-                    tau = 0.1
-
-                    log_probs = nn.functional.log_softmax(relevance / tau, dim=-1)
-                    relevance_loss = -(log_probs[desc.modality_bos_idx:desc.modality_eos_idx+1].mean())
-                    loss = lambda_kl * kl_loss + relevance_loss
-
-                    print(f'KL: {kl_loss.item():.4f} | Image Relevance: {float(-relevance_loss):.4f} | Overall loss: {loss.item():.4f}')
-                    
-                    loss.backward()
-                    optimizer.step()
-
-                # approach = vanilla
-                else:
-                    outputs = self.model(
-                        **model_inputs,
-                        use_cache=False,
-                        position_ids=position_ids,
-                        desc=desc
-                    )
+                print(f'KL: {kl_loss.item():.4f} | Image Relevance: {float(-relevance_loss):.4f} | Overall loss: {loss.item():.4f}')
+                
+                loss.backward()
+                optimizer.step()
 
             # Decode next token from last logits
             with torch.no_grad():
@@ -447,10 +374,6 @@ class QwenVLKVOpt(nn.Module):
                 skip_special_tokens=True,
                 clean_up_tokenization_spaces=False
             )[0]            
-
-            # if plot:
-            #     print(f"Partial answer: {decoded_answer}")
-            #     print(f'---------------------')
 
             # cleanup
             desc.set_reference_logits(None)
@@ -502,7 +425,18 @@ class QwenVLKVOpt(nn.Module):
             errors='replace'
         )
 
+        generated_token_ids = gen_ids[0].detach().cpu().tolist()
+        generated_tokens = self.processor.tokenizer.convert_ids_to_tokens(generated_token_ids)        
+
         if plot:
             print(f"Model's output: {response}")
         
-        return response
+        output = {
+            'response': response,
+            'relevance': relevances,
+            'modality_bos_idx': modality_bos_idx,
+            'modality_eos_idx': modality_eos_idx,
+            'tokens': generated_tokens
+        }
+        
+        return output

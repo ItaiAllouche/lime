@@ -3,19 +3,14 @@ import torch.nn as nn
 from transformers import AutoProcessor
 import librosa
 import gc
-from typing import Literal
+
 from modeling.modeling_qwen2_audio_lime import Qwen2AudioForConditionalGenerationKVOpt
-
 from descriptor import LimeDesc
-
-import sys
-sys.path.append('/app/dev/')
 from lrp.patches import patch_qwen2_audio
-
 
 QWEN2_AUDIO_ID = 'Qwen/Qwen2-Audio-7B-Instruct'
 MAX_AUDIO_DURATION = 30
-class Qwen2AudioKVOpt(nn.Module):
+class Qwen2AudioLIME(nn.Module):
     def __init__(
         self,
         verbose: bool = True
@@ -78,7 +73,6 @@ class Qwen2AudioKVOpt(nn.Module):
         self,
         inputs: dict,
         desc: LimeDesc,
-        output_attentions: bool,
         position_ids,
     ):
         model = self.model
@@ -182,7 +176,6 @@ class Qwen2AudioKVOpt(nn.Module):
     def generate(
         self,
         inputs: dict,
-        approach: Literal['opt', 'vanila'], 
         opt_steps: int = 7,
         opt_lr: float = 0.0005,
         lambda_kl: float = 0.007,
@@ -236,10 +229,6 @@ class Qwen2AudioKVOpt(nn.Module):
             )            
             kv_deltas[layer_idx] = (delta_k, delta_v)
             delta_params.extend([delta_k, delta_v])
-            # kv_deltas[layer_idx] = (delta_v)
-            # delta_params.extend([delta_v])
-            # kv_deltas[layer_idx] = (delta_k)
-            # delta_params.extend([delta_k])
 
         self.model.eval()
 
@@ -253,11 +242,11 @@ class Qwen2AudioKVOpt(nn.Module):
         top_k = self.model.generation_config.top_k if do_sample else 0
         top_p = self.model.generation_config.top_p if do_sample else 1.0
 
-        # initilize LimeDesc description
+        # initilize descriptor
         desc = LimeDesc(
             deltas_layers=deltas_layers,
             lambda_kl=lambda_kl,
-            approach=approach,
+            approach='opt',
             modality_bos_idx=modality_bos_idx,
             modality_eos_idx=modality_eos_idx,
             prompt_len=T,
@@ -285,113 +274,64 @@ class Qwen2AudioKVOpt(nn.Module):
                 # forward + optimization step
                 optimizer.zero_grad()
 
-                if approach == 'opt':
-                    print(f'Adam step: {opt_step}')
-                    
-                    # compute relevance using LRP
-                    outputs, stash = self._outputs_for_relevance(
-                        inputs=model_inputs,
-                        desc=desc,
-                        output_attentions=False,
-                        position_ids=position_ids
+                print(f'Adam step: {opt_step}')
+                
+                # compute relevance using LRP
+                outputs, stash = self._outputs_for_relevance(
+                    inputs=model_inputs,
+                    desc=desc,
+                    output_attentions=False,
+                    position_ids=position_ids
+                )
+                kl_loss = desc.kl_loss
+
+                assert kl_loss is not None, "KL loss is None"
+
+                nonpad_idx = torch.where(model_inputs['attention_mask'][0].to(torch.bool))[0].tolist()
+                target_pos = nonpad_idx[-1] # last non-padded token
+
+                with torch.no_grad():
+                    next_token = self._decode(
+                        outputs.logits,
+                        input_ids,
+                        do_sample,
+                        temperature,
+                        repetition_penalty,
+                        top_k,
+                        top_p
                     )
-                    kl_loss = desc.kl_loss
 
-                    assert kl_loss is not None, "KL loss is None when approach='opt'."
+                # next predicted token id at that position (for batch 0)
+                next_id = int(next_token[0, 0].item())
+                target_logit = outputs.logits[0, target_pos, next_id]
+                merged = stash["merged"]
 
-                    nonpad_idx = torch.where(model_inputs['attention_mask'][0].to(torch.bool))[0].tolist()
-                    target_pos = nonpad_idx[-1] # last non-padded token
+                grad_merged = torch.autograd.grad(
+                    outputs=target_logit,
+                    inputs=merged,
+                    # retain_graph=True, # same as create_graph
+                    create_graph=True,# false
+                    allow_unused=False,
+                )[0]
 
-                    with torch.no_grad():
-                        next_token = self._decode(
-                            outputs.logits,
-                            input_ids,
-                            do_sample,
-                            temperature,
-                            repetition_penalty,
-                            top_k,
-                            top_p
-                        )
+                # token-level relevance as grad * input
+                relevance = (grad_merged[0] * merged[0]).sum(-1)
 
-                    # next predicted token id at that position (for batch 0)
-                    next_id = int(next_token[0, 0].item())
-                    target_logit = outputs.logits[0, target_pos, next_id]
-                    merged = stash["merged"]
+                # in the last opt step we save the normalized relevance and attnetions
+                if output_relevance and opt_step + 1 == opt_steps:
+                    # normalized_relevance = relevance / (relevance.abs().max().detach() + 1e-12)
+                    relevances.append(relevance.detach().to(torch.float32).cpu().numpy())
+                    
+                tau = 0.1
+                log_probs = nn.functional.log_softmax(relevance / tau, dim=-1)
+                relevance_loss = - (log_probs[desc.modality_bos_idx:desc.modality_eos_idx+1].mean())
+                loss = lambda_kl * kl_loss + relevance_loss
 
-                    grad_merged = torch.autograd.grad(
-                        outputs=target_logit,
-                        inputs=merged,
-                        # retain_graph=True, # same as create_graph
-                        create_graph=True,# false
-                        allow_unused=False,
-                    )[0]
+                print(f'KL: {kl_loss.item():.4f} | Audio Relevance: {float(-relevance_loss):.4f} | Overall loss: {loss.item():.4f}')
 
-                    # token-level relevance as grad * input
-                    relevance = (grad_merged[0] * merged[0]).sum(-1)
+                loss.backward()
+                optimizer.step()
 
-                    # in the last opt step we save the normalized relevance and attnetions
-                    if output_relevance and opt_step + 1 == opt_steps:
-                        # normalized_relevance = relevance / (relevance.abs().max().detach() + 1e-12)
-                        relevances.append(relevance.detach().to(torch.float32).cpu().numpy())
-                        
-                    tau = 0.1
-                    log_probs = nn.functional.log_softmax(relevance / tau, dim=-1)
-                    relevance_loss = - (log_probs[desc.modality_bos_idx:desc.modality_eos_idx+1].mean())
-                    loss = lambda_kl * kl_loss + relevance_loss
-
-                    print(f'KL: {kl_loss.item():.4f} | Audio Relevance: {float(-relevance_loss):.4f} | Overall loss: {loss.item():.4f}')
-
-                    loss.backward()
-                    optimizer.step()
-
-                # approach = vanila
-                else:
-                    if output_relevance:
-                        outputs, stash = self._outputs_for_relevance(
-                            inputs=model_inputs,
-                            desc=desc,
-                            output_attentions=False,
-                            position_ids=position_ids
-                        )
-
-                        nonpad_idx = torch.where(model_inputs['attention_mask'][0].to(torch.bool))[0].tolist()
-                        target_pos = nonpad_idx[-1] # last non-padded token
-
-                        with torch.no_grad():
-                            next_token = self._decode(
-                                outputs.logits,
-                                input_ids,
-                                do_sample,
-                                temperature,
-                                repetition_penalty,
-                                top_k,
-                                top_p
-                            )
-
-                        # next predicted token id at that position (for batch 0)
-                        next_id = int(next_token[0, 0].item())
-                        target_logit = outputs.logits[0, target_pos, next_id]
-                        merged = stash["merged"]
-
-                        grad_merged = torch.autograd.grad(
-                            outputs=target_logit,
-                            inputs=merged,
-                            create_graph=False,
-                            allow_unused=False,
-                        )[0]
-
-                        # token-level relevance as grad * input
-                        relevance = (grad_merged[0] * merged[0]).sum(-1)  
-                        relevances.append(relevance.detach().to(torch.float32).cpu().numpy())                          
-
-                    else:
-                        outputs = self.model(
-                            **model_inputs,
-                            use_cache=True,
-                            position_ids=position_ids,
-                            desc=desc
-                        )
- 
             # decode next token from last logits
             with torch.no_grad():
                 next_token = self._decode(
@@ -458,10 +398,6 @@ class Qwen2AudioKVOpt(nn.Module):
                 )
                 kv_deltas[layer_idx] = (delta_k, delta_v)
                 delta_params.extend([delta_k, delta_v])
-                # kv_deltas[layer_idx] = (delta_v)
-                # delta_params.extend([delta_v])
-                # kv_deltas[layer_idx] = (delta_k)
-                # delta_params.extend([delta_k])
 
             optimizer = torch.optim.Adam(delta_params, lr=opt_lr)
             desc.set_kv_deltas(kv_deltas)
@@ -478,7 +414,6 @@ class Qwen2AudioKVOpt(nn.Module):
         generated_tokens = self.processor.tokenizer.convert_ids_to_tokens(generated_token_ids)
 
         if plot:
-            print(f'\nTokens: {tokens}')
             print(f"Model's output: {response}" )
          
         output = {

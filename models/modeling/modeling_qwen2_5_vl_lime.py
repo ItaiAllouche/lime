@@ -1522,7 +1522,7 @@ QWEN2_5_VL_INPUTS_DOCSTRING = r"""
 """
 
 
-class Qwen2_5_VLForConditionalGenerationKVOpt(Qwen2_5_VLPreTrainedModel, GenerationMixin):
+class Qwen2_5_VLForConditionalGeneration(Qwen2_5_VLPreTrainedModel, GenerationMixin):
     _tied_weights_keys = ["lm_head.weight"]
     config_class = Qwen2_5_VLConfig
     _no_split_modules = ["Qwen2_5_VLDecoderLayer", "Qwen2_5_VLVisionBlock"]
@@ -1535,10 +1535,10 @@ class Qwen2_5_VLForConditionalGenerationKVOpt(Qwen2_5_VLPreTrainedModel, Generat
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
         self.rope_deltas = None  # cache rope_deltas here
 
-        ######## itai change ########
+        ######## lime change ########
         # placeholder for reference model (set externally after weight loading)
         self.reference_model = None
-        ######## itai change ########        
+        ######## lime change ########        
 
         # Initialize weights and apply final processing
         self.post_init()
@@ -1948,7 +1948,7 @@ class Qwen2_5_VLForConditionalGenerationKVOpt(Qwen2_5_VLPreTrainedModel, Generat
                 log_target=False
             )
             desc.set_kl_loss(kl_loss)
-        ######### itai change ##########
+        ######### lime change ##########
 
         loss = None
         if labels is not None:
