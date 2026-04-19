@@ -16,3 +16,6 @@ venv/
 
 # macOS
 .DS_Store
+
+# SimSun.ttf
+*.ttf
