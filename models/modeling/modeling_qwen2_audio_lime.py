@@ -22,13 +22,13 @@ import torch
 import torch.utils.checkpoint
 from torch import nn
 
-########## itai change ##########
+########## lime change ##########
 from transformers.models.qwen2.modeling_qwen2 import repeat_kv, apply_rotary_pos_emb
 from transformers.models.qwen2.configuration_qwen2 import Qwen2Config
 from transformers import AutoTokenizer
 from transformers.processing_utils import Unpack
 import matplotlib.pyplot as plt
-########## itai change ##########
+########## lime change ##########
 from transformers.activations import ACT2FN
 from transformers.cache_utils import Cache
 from transformers.generation import GenerationMixin
@@ -55,7 +55,7 @@ logger = logging.get_logger(__name__)
 _CONFIG_FOR_DOC = "Qwen2AudioConfig"
 
 QWEN2_AUDIO_ID = 'Qwen/Qwen2-Audio-7B-Instruct'
-########## itai change ##########
+########## lime change ##########
 def plot_token_contrib(contrib, audio_start, audio_end):
 
     fig, ax = plt.subplots(figsize=(8, 4))
@@ -86,20 +86,18 @@ def eager_attention_forward(
     attention_mask: Optional[torch.Tensor],
     scaling: float,
     layer_idx: int,
-    desc,########## itai change ##########
+    desc,########## lime change ##########
     dropout: float = 0.0,
     **kwargs,
 ):
     key_states = repeat_kv(key, module.num_key_value_groups)
     value_states = repeat_kv(value, module.num_key_value_groups)
 
-    ########## itai change ##########
+    ########## lime change ##########
     # apply kv delts only on the relevant layers
     if layer_idx in desc.deltas_layers and desc.approach == 'opt':
         kv_deltas = desc.kv_deltas
         delta_k, delta_v = kv_deltas[layer_idx]
-        # delta_v = kv_deltas[layer_idx]
-        # delta_k = kv_deltas[layer_idx]
 
         delta_k_exp = delta_k.to(device=key_states.device, dtype=key_states.dtype)
         delta_v_exp = delta_v.to(device=value_states.device, dtype=value_states.dtype)
@@ -110,7 +108,7 @@ def eager_attention_forward(
         # apply deltas
         key_states[:, :, :, :] += delta_k_exp
         value_states[:, :, :, :] += delta_v_exp
-    ########## itai change ##########
+    ########## lime change ##########
 
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
     if attention_mask is not None:
@@ -140,7 +138,7 @@ class Qwen2AttentionKVOpt(nn.Module):
         self.k_proj = nn.Linear(config.hidden_size, config.num_key_value_heads * self.head_dim, bias=True)
         self.v_proj = nn.Linear(config.hidden_size, config.num_key_value_heads * self.head_dim, bias=True)   
         self.o_proj = nn.Linear(config.num_attention_heads * self.head_dim, config.hidden_size, bias=False)
-        self.desc = None ########## itai change ##########
+        self.desc = None ########## lime change ##########
 
     def forward(
         self,
@@ -174,7 +172,7 @@ class Qwen2AttentionKVOpt(nn.Module):
         ):
             sliding_window = self.config.sliding_window
 
-        attention_interface: Callable = eager_attention_forward ########## itai change ##########
+        attention_interface: Callable = eager_attention_forward ########## lime change ##########
         if self.config._attn_implementation != "eager":
             if self.config._attn_implementation == "sdpa" and kwargs.get("output_attentions", False):
                 logger.warning_once(
@@ -218,7 +216,7 @@ def plot_embeddings(embeddings, audio_start, audio_end):
     plt.tight_layout()
     # plt.show()
     plt.savefig(f'/app/dev/figs/embeddings.pdf', format="pdf", dpi=300, bbox_inches="tight")
-########## itai change ##########
+########## lime change ##########
 
 @dataclass
 class Qwen2AudioCausalLMOutputWithPast(ModelOutput):
@@ -951,9 +949,9 @@ class Qwen2AudioForConditionalGenerationKVOpt(Qwen2AudioPreTrainedModel, Generat
         self.vocab_size = config.text_config.vocab_size
         self.language_model = AutoModelForCausalLM.from_config(config.text_config)
 
-        ########## itai change ##########
+        ########## lime change ##########
         self.reference_model = AutoModelForCausalLM.from_config(config.text_config)
-        ########## itai change ##########
+        ########## lime change ##########
 
         if self.language_model._tied_weights_keys is not None:
             self._tied_weights_keys = [f"language_model.{k}" for k in self.language_model._tied_weights_keys]
@@ -962,7 +960,7 @@ class Qwen2AudioForConditionalGenerationKVOpt(Qwen2AudioPreTrainedModel, Generat
         self._padding_side = "left"  # set it to left by default, user can use setter to change padding_sides
         self.post_init()
 
-        ########## itai change ##########
+        ########## lime change ##########
         self.text_config = config.text_config
 
         # apply Qwen2AttentionKVOpt in all language model's layers
@@ -973,7 +971,7 @@ class Qwen2AudioForConditionalGenerationKVOpt(Qwen2AudioPreTrainedModel, Generat
             new_attn.load_state_dict(old_attn.state_dict())
             self.language_model.model.layers[layer].self_attn = new_attn
             print(f'Applied on layer {layer}')
-        ########## itai change ##########
+        ########## lime change ##########
 
     @property
     def padding_side(self):
@@ -1210,7 +1208,7 @@ class Qwen2AudioForConditionalGenerationKVOpt(Qwen2AudioPreTrainedModel, Generat
     @replace_return_docstrings(output_type=Qwen2AudioCausalLMOutputWithPast, config_class=_CONFIG_FOR_DOC)
     def forward(
         self,
-        desc, ########## itai change ##########
+        desc, ########## lime change ##########
         input_ids: Optional[torch.LongTensor] = None,
         input_features: Optional[torch.FloatTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
@@ -1330,11 +1328,11 @@ class Qwen2AudioForConditionalGenerationKVOpt(Qwen2AudioPreTrainedModel, Generat
                     audio_features = audio_features.to(inputs_embeds.device, inputs_embeds.dtype)
                     inputs_embeds = inputs_embeds.masked_scatter(special_audio_mask, audio_features)
 
-        ########## itai change ##########
+        ########## lime change ##########
         # plot_embeddings(inputs_embeds, audio_bos_idx, audio_eos_idx)
         for layer in range(len(self.language_model.model.layers)):
             self.language_model.model.layers[layer].self_attn.desc = desc
-        ########## itai change ##########
+        ########## lime change ##########
 
         # forward of the student model
         print('student forward...')
@@ -1352,7 +1350,7 @@ class Qwen2AudioForConditionalGenerationKVOpt(Qwen2AudioPreTrainedModel, Generat
         logits = outputs.logits
         loss = outputs.loss
 
-        ########## itai change ##########
+        ########## lime change ##########
         if desc.approach == 'opt':
             if desc.reference_logits is None:
         
@@ -1391,7 +1389,7 @@ class Qwen2AudioForConditionalGenerationKVOpt(Qwen2AudioPreTrainedModel, Generat
                 log_target=False
             )
             desc.set_kl_loss(kl_loss)
-        ########## itai change ##########      
+        ########## lime change ##########      
 
         # we dont enter here since we are only working on inference
         if labels is not None:

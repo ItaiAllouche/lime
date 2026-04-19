@@ -37,7 +37,7 @@ SUPPORT_BF16 = SUPPORT_CUDA and torch.cuda.is_bf16_supported()
 SUPPORT_FP16 = SUPPORT_CUDA and torch.cuda.get_device_capability(0)[0] >= 7
 
 ########## itai change ##########
-from ...descriptor import KVOptDesc
+from descriptor import LimeDesc
 
 import sys
 sys.path.insert(0, "/root/.cache/huggingface/modules/transformers_modules/Qwen/Qwen-VL-Chat/f57cfbd358cb56b710d963669ad1bcfb44cdcdd8/")
@@ -76,7 +76,7 @@ Pass argument `stream` to model.chat() is buggy, deprecated, and marked for remo
 apply_rotary_emb_func = None
 rms_norm = None
 
-ALL_ATTENTION_FUNCTIONS = {} ########## itai change ##########
+ALL_ATTENTION_FUNCTIONS = {} ########## lime change ##########
 
 # Copied from transformers.models.bart.modeling_bart._make_causal_mask
 def _make_causal_mask(
@@ -110,7 +110,7 @@ def _expand_mask(mask: torch.Tensor, dtype: torch.dtype, tgt_len: Optional[int] 
 
     return inverted_mask.masked_fill(inverted_mask.to(torch.bool), torch.finfo(dtype).min)
 
-########## itai change ##########
+########## lime change ##########
 def eager_attention_forward(
     module,
     query,
@@ -120,9 +120,9 @@ def eager_attention_forward(
     scale_attn_weights,
     attention_mask=None,
     head_mask=None,
-    desc: Optional[KVOptDesc]=None
+    desc: Optional[LimeDesc]=None
 ):
-    ########## itai change ##########
+    ########## lime change ##########
     if module.layer_idx in desc.deltas_layers and desc.approach == 'opt':
         kv_deltas = desc.kv_deltas
         delta_k, delta_v = kv_deltas[module.layer_idx]
@@ -136,7 +136,7 @@ def eager_attention_forward(
         # apply deltas only on image keys and values
         key[:, :, :, :] += delta_k_exp
         value[:, :, :, :] += delta_v_exp
-    ########## itai change ##########   
+    ########## lime change ##########   
 
     attn_weights = torch.matmul(query, key.transpose(-1, -2))
 
@@ -321,7 +321,7 @@ class QWenAttention(nn.Module):
         encoder_attention_mask: Optional[torch.FloatTensor] = None,
         output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = False,
-        desc: Optional[KVOptDesc] = None, ########## itai change ##########
+        desc: Optional[LimeDesc] = None, ########## lime change ##########
     ):
 
         mixed_x_layer = self.c_attn(hidden_states)
@@ -363,7 +363,7 @@ class QWenAttention(nn.Module):
         key = key.permute(0, 2, 1, 3)
         value = value.permute(0, 2, 1, 3)
 
-        ########## itai change ##########
+        ########## lime change ##########
         attn_output, attn_weight = eager_attention_forward(
             module=self,
             query=query,
@@ -403,12 +403,12 @@ class QWenMLP(nn.Module):
         ff_dim_in = config.intermediate_size // 2
         self.c_proj = nn.Linear(ff_dim_in, config.hidden_size, bias=not config.no_bias)
 
-        ########## itai change ##########
+        ########## lime change ##########
         self.gate_proj = self.w2
         self.act_fn = F.silu
         self.up_proj = self.w1
         self.down_proj = self.c_proj
-        ########## itai change ##########
+        ########## lime change ##########
 
     def forward(self, hidden_states):
         a1 = self.w1(hidden_states)
@@ -448,7 +448,7 @@ class QWenBlock(nn.Module):
         encoder_attention_mask: Optional[torch.FloatTensor] = None,
         use_cache: Optional[bool] = False,
         output_attentions: Optional[bool] = False,
-        desc: Optional[KVOptDesc] = None, ########## itai change ##########
+        desc: Optional[LimeDesc] = None, ########## lime change ##########
 
     ):
         layernorm_output = self.ln_1(hidden_states)
@@ -637,7 +637,7 @@ class QWenModel(QWenPreTrainedModel):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
-        desc: Optional[KVOptDesc] = None, ########## itai change ##########
+        desc: Optional[LimeDesc] = None, ########## lime change ##########
     ):
         if past_key_values is None and torch.any(input_ids == self.config.visual['image_start_id']):
             bos_pos = torch.where(input_ids == self.config.visual['image_start_id'])
@@ -942,7 +942,7 @@ class QWenLMHeadModel(QWenPreTrainedModel):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
-        desc: Optional[KVOptDesc] = None, ########## itai change ##########
+        desc: Optional[LimeDesc] = None, ########## lime change ##########
     ) -> Union[Tuple, CausalLMOutputWithPast]:
 
         return_dict = (
@@ -970,11 +970,11 @@ class QWenLMHeadModel(QWenPreTrainedModel):
 
         lm_logits = self.lm_head(hidden_states)
 
-        ########## itai change ##########
+        ########## lime change ##########
         if desc.approach == 'opt':
             if desc.reference_logits is None:
                 
-                reference_desc = KVOptDesc(
+                reference_desc = LimeDesc(
                     deltas_layers=desc.deltas_layers,
                     lambda_kl=desc.lambda_kl,
                     approach='vanila',
@@ -1025,7 +1025,7 @@ class QWenLMHeadModel(QWenPreTrainedModel):
                 log_target=False
             )
             desc.set_kl_loss(kl_loss)
-        ########## itai change ##########
+        ########## lime change ##########
 
         loss = None
         if labels is not None:

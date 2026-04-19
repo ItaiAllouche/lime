@@ -60,7 +60,7 @@ if is_torch_flex_attn_available():
 
     from transformers.integrations.flex_attention import make_flex_block_causal_mask
 
-from ...descriptor import KVOptDesc
+from descriptor import LimeDesc
 
 logger = logging.get_logger(__name__)
 
@@ -194,20 +194,18 @@ def eager_attention_forward(
     value: torch.Tensor,
     attention_mask: Optional[torch.Tensor],
     scaling: float,
-    desc, ########## itai change ##########
+    desc, ########## lime change ##########
     dropout: float = 0.0,
     **kwargs,
 ):
     key_states = repeat_kv(key, module.num_key_value_groups)
     value_states = repeat_kv(value, module.num_key_value_groups)
 
-    ########## itai change ##########
+    ########## lime change ##########
     # apply kv delts only on the relevant layers
     if module.layer_idx in desc.deltas_layers and desc.approach == 'opt':
         kv_deltas = desc.kv_deltas
         delta_k, delta_v = kv_deltas[module.layer_idx]
-        # delta_k = kv_deltas[module.layer_idx]
-        # # delta_v = kv_deltas[module.layer_idx]
 
         delta_k_exp = delta_k.to(device=key_states.device, dtype=key_states.dtype)
         delta_v_exp = delta_v.to(device=value_states.device, dtype=value_states.dtype)
@@ -217,7 +215,7 @@ def eager_attention_forward(
         
         key_states[:, :, :, :] += delta_k_exp
         value_states[:, :, :, :] += delta_v_exp
-    ########## itai change ##########    
+    ########## lime change ##########    
 
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
     if attention_mask is not None:
@@ -260,7 +258,7 @@ class LlamaAttention(nn.Module):
 
     def forward(
         self,
-        desc: dict, ########## itai change ##########
+        desc: dict, ########## lime change ##########
         hidden_states: torch.Tensor,
         position_embeddings: Tuple[torch.Tensor, torch.Tensor],
         attention_mask: Optional[torch.Tensor],
@@ -323,7 +321,7 @@ class LlamaDecoderLayer(nn.Module):
 
     def forward(
         self,
-        desc, ########## itai change ##########
+        desc, ########## lime change ##########
         hidden_states: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
@@ -341,7 +339,7 @@ class LlamaDecoderLayer(nn.Module):
         # Self Attention
         hidden_states, self_attn_weights = self.self_attn(
             hidden_states=hidden_states,
-            desc=desc, ########## itai change ##########
+            desc=desc, ########## lime change ##########
             attention_mask=attention_mask,
             position_ids=position_ids,
             past_key_value=past_key_value,
@@ -518,7 +516,7 @@ class LlamaModel(LlamaPreTrainedModel):
     @add_start_docstrings_to_model_forward(LLAMA_INPUTS_DOCSTRING)
     def forward(
         self,
-        desc=None, ########## itai change ##########
+        desc=None, ########## lime change ##########
         input_ids: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
@@ -595,7 +593,7 @@ class LlamaModel(LlamaPreTrainedModel):
                 )
             else:
                 layer_outputs = decoder_layer(
-                    desc=desc, ########## itai change ##########
+                    desc=desc, ########## lime change ##########
                     hidden_states=hidden_states,
                     attention_mask=causal_mask,
                     position_ids=position_ids,
@@ -801,7 +799,7 @@ class LlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
     @replace_return_docstrings(output_type=CausalLMOutputWithPast, config_class=_CONFIG_FOR_DOC)
     def forward(
         self,
-        desc=None, ########## itai change ##########
+        desc = None, ########## lime change ##########
         input_ids: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
@@ -873,11 +871,11 @@ class LlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
         logits = self.lm_head(hidden_states[:, slice_indices, :])
         loss = None
 
-        ########## itai change ##########
+        ########## lime change ##########
         if desc.approach == 'opt':
             if desc.reference_logits is None:
 
-                reference_desc = KVOptDesc(
+                reference_desc = LimeDesc(
                     deltas_layers=desc.deltas_layers,
                     lambda_kl=desc.lambda_kl,
                     approach='vanila',
@@ -925,7 +923,7 @@ class LlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
                 log_target=False
             )
             desc.set_kl_loss(kl_loss)
-        ########## itai change ##########
+        ########## lime change ##########
 
         if labels is not None:
             loss = self.loss_function(logits=logits, labels=labels, vocab_size=self.config.vocab_size, **kwargs)

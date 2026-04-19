@@ -1,102 +1,18 @@
 from PIL import Image
 import torch
 import torch.nn as nn
-from transformers import Qwen2_5_VLForConditionalGeneration, AutoTokenizer, AutoProcessor
+from transformers import AutoProcessor
 from typing import Literal
 import copy
 import gc
 
-from ...descriptor import KVOptDesc
-from .modeling_qwen2_5_vl_kv_opt import Qwen2_5_VLForConditionalGenerationKVOpt, Qwen2_5_VLModel
-
-import sys
-sys.path.append('/app/dev/')
+from descriptor import LimeDesc
+from modeling.modeling_qwen2_5_vl_lime import Qwen2_5_VLForConditionalGenerationKVOpt, Qwen2_5_VLModel
 from lrp.patches import patch_qwenvl2_5
-# from plot import plot_relevance
 from utils import compare_model_to_reference
 
 QWEN_2_5_VL_ID = "Qwen/Qwen2.5-VL-7B-Instruct"
-
-class QwenVL2_5(nn.Module):
-    def __init__(
-        self,
-    ):
-        super().__init__()
-        self.model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-            QWEN_2_5_VL_ID,
-            attn_implementation="eager",
-        )
-
-        self.processor = AutoProcessor.from_pretrained(QWEN_2_5_VL_ID)
-
-        # freeze parameters
-        for p in self.model.parameters():
-            p.requires_grad = False
-
-    def get_inputs_for_forward(
-        self,
-        instruction: str,
-        image_path: str,
-        device_num: int = 0
-    ):
-        device = f'cuda:{device_num}' if torch.cuda.is_available() else 'cpu'
-        
-        image = Image.open(image_path).convert("RGB")
-
-        # create conversation with proper audio token format
-        conversation = [
-            {"role": "user", "content": [
-                    {"type": "text", "text": instruction},
-                    {"type": "image"},
-                ],
-            }
-        ]
-
-        prompt = self.processor.apply_chat_template(
-            conversation=conversation,
-            tokenize=False,
-            add_generation_prompt=True
-        )
-
-        inputs = self.processor(
-            text=prompt,
-            images=image,
-            return_tensors="pt",
-            padding=True
-        )
-        inputs = {k: v.to(device) if hasattr(v, 'to') else v for k, v in inputs.items()}
-        
-        return inputs
-
-    def generate(
-        self,
-        inputs: dict,
-        max_new_tokens: int = 120,
-        plot: bool = False        
-    ):
-        _, T = inputs["input_ids"].shape
-
-        with torch.inference_mode():
-            output = self.model.generate(
-                **inputs,
-                output_attentions=False,
-                max_new_tokens=max_new_tokens,
-                use_cache=True,
-                return_dict_in_generate=True                
-            )
-        generated_only_ids = output.sequences[:, T:]
-        response = self.processor.batch_decode(
-            generated_only_ids,
-            skip_special_tokens=True,
-            clean_up_tokenization_spaces=False
-        )[0]
-
-        if plot:
-            print(f"Model's output: {response}" )
-
-        return response            
-
-class QwenVL2_5KVOpt(nn.Module):
+class QwenVL2_5LIME(nn.Module):
     def __init__(
         self,
         verbose: bool = True
@@ -170,7 +86,7 @@ class QwenVL2_5KVOpt(nn.Module):
     def _outputs_for_relevance(
         self,
         inputs: dict,
-        desc: KVOptDesc, 
+        desc: LimeDesc, 
         position_ids=None
     ):
         model = self.model
@@ -279,9 +195,10 @@ class QwenVL2_5KVOpt(nn.Module):
         lambda_kl: float = 1,
         deltas_layers: list = list(range(0,28)), # qwen2_5VL has 28 decoder layers
         max_new_tokens: int = 50, 
-        plot: bool = False            
+        plot: bool = False,
+        output_relevance: bool = False 
     ):
-        relevances = []
+        relevances = [] if output_relevance else None
         
         device = next(self.model.parameters()).device
         inputs = {k: v.to(device) if hasattr(v, 'to') else v for k, v in inputs.items()}
@@ -340,7 +257,7 @@ class QwenVL2_5KVOpt(nn.Module):
         top_p = self.model.generation_config.top_p if do_sample else 1.0
 
         # initilize KVOpt description
-        desc = KVOptDesc(
+        desc = LimeDesc(
             deltas_layers=deltas_layers,
             lambda_kl=lambda_kl,
             approach=approach,
@@ -414,8 +331,11 @@ class QwenVL2_5KVOpt(nn.Module):
 
                     # token-level relevance as grad * input
                     relevance = (grad_merged[0] * merged[0]).sum(-1)
-                    tau = 0.1
 
+                    if output_relevance and opt_step + 1 == opt_steps:
+                        relevances.append(relevance.detach().to(torch.float32).cpu().numpy())             
+
+                    tau = 0.1
                     log_probs = nn.functional.log_softmax(relevance / tau, dim=-1)
                     relevance_loss = - (log_probs[desc.modality_bos_idx:desc.modality_eos_idx+1].mean())
                     loss = lambda_kl * kl_loss + relevance_loss
@@ -512,9 +432,20 @@ class QwenVL2_5KVOpt(nn.Module):
             clean_up_tokenization_spaces=False
         )[0]
 
+        generated_token_ids = gen_ids[0].detach().cpu().tolist()
+        generated_tokens = self.processor.tokenizer.convert_ids_to_tokens(generated_token_ids)        
+
         if plot:
             print(f'\nTokens: {tokens}')
             print(f"Model's output: {response}" )
          
-        return response
+        output = {
+            'response': response,
+            'relevance': relevances,
+            'modality_bos_idx': modality_bos_idx,
+            'modality_eos_idx': modality_eos_idx,
+            'tokens': generated_tokens
+        }
+        
+        return output
         

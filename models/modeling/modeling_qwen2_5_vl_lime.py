@@ -52,7 +52,7 @@ if is_flash_attn_available():
 if is_flash_attn_available():
     from transformers.modeling_flash_attention_utils import _flash_attention_forward
 
-from ...descriptor import KVOptDesc
+from descriptor import LimeDesc
 
 logger = logging.get_logger(__name__)
 
@@ -669,14 +669,14 @@ def eager_attention_forward(
     value: torch.Tensor,
     attention_mask: Optional[torch.Tensor],
     scaling: float,
-    desc: Optional[KVOptDesc], ########## itai change ##########
+    desc: Optional[LimeDesc], ########## lime change ##########
     dropout: float = 0.0,
     **kwargs,
 ):    
     key_states = repeat_kv(key, module.num_key_value_groups)
     value_states = repeat_kv(value, module.num_key_value_groups)
 
-    ########## itai change ##########
+    ########## lime change ##########
     if module.layer_idx in desc.deltas_layers and desc.approach == 'opt':
         kv_deltas = desc.kv_deltas
         delta_k, delta_v = kv_deltas[module.layer_idx]
@@ -690,7 +690,7 @@ def eager_attention_forward(
         # apply deltas only on image keys and values
         key_states[:, :, :, :] += delta_k_exp
         value_states[:, :, :, :] += delta_v_exp
-    ########## itai change ##########
+    ########## lime change ##########
 
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
     
@@ -708,7 +708,7 @@ def eager_attention_forward(
     attn_output = torch.matmul(attn_weights, value_states)
     
     return attn_output, attn_weights
-########## itai change ##########
+########## lime change ##########
 
 class Qwen2_5_VLAttention(nn.Module):
     """
@@ -758,7 +758,7 @@ class Qwen2_5_VLAttention(nn.Module):
         use_cache: bool = False,
         cache_position: Optional[torch.LongTensor] = None,
         position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,  # necessary, but kept here for BC
-        desc: Optional[KVOptDesc] = None, ########## itai change ##########
+        desc: Optional[LimeDesc] = None, ########## lime change ##########
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         bsz, q_len, _ = hidden_states.size()
 
@@ -780,7 +780,7 @@ class Qwen2_5_VLAttention(nn.Module):
             key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
  
-        ########## itai change ##########
+        ########## lime change ##########
         attn_output, attn_weights = eager_attention_forward(
             module=self,
             query=query_states,
@@ -791,7 +791,7 @@ class Qwen2_5_VLAttention(nn.Module):
             desc=desc,
             dropout=self.attention_dropout,
         )
-        ########## itai change ##########
+        ########## lime change ##########
 
         if attn_output.size() != (bsz, self.num_heads, q_len, self.head_dim):
             raise ValueError(
@@ -1018,7 +1018,7 @@ QWEN2_5_VL_ATTENTION_CLASSES = {
     "sdpa": Qwen2_5_VLSdpaAttention,
 }
 
-ALL_ATTENTION_FUNCTIONS = {} ########## itai change ##########
+ALL_ATTENTION_FUNCTIONS = {} ########## lime change ##########
 
 
 class Qwen2_5_VLDecoderLayer(nn.Module):
@@ -1047,7 +1047,7 @@ class Qwen2_5_VLDecoderLayer(nn.Module):
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
         position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,  # necessary, but kept here for BC
-        desc: Optional[KVOptDesc] = None, ########## itai change ##########
+        desc: Optional[LimeDesc] = None, ########## lime change ##########
         **kwargs,
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         """
@@ -1086,7 +1086,7 @@ class Qwen2_5_VLDecoderLayer(nn.Module):
             use_cache=use_cache,
             cache_position=cache_position,
             position_embeddings=position_embeddings,
-            desc=desc, ########## itai change ##########
+            desc=desc, ########## lime change ##########
         )
         hidden_states = residual + hidden_states
 
@@ -1147,7 +1147,7 @@ class Qwen2_5_VLModel(Qwen2_5_VLPreTrainedModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
-        desc: Optional[KVOptDesc] = None, ########## itai change ##########
+        desc: Optional[LimeDesc] = None, ########## lime change ##########
     ) -> Union[Tuple, BaseModelOutputWithPast]:
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
@@ -1759,7 +1759,7 @@ class Qwen2_5_VLForConditionalGenerationKVOpt(Qwen2_5_VLPreTrainedModel, Generat
         rope_deltas: Optional[torch.LongTensor] = None,
         cache_position: Optional[torch.LongTensor] = None,
         second_per_grid_ts: Optional[torch.Tensor] = None,
-        desc: Optional[KVOptDesc] = None, ########## itai change ##########
+        desc: Optional[LimeDesc] = None, ########## lime change ##########
     ) -> Union[Tuple, Qwen2_5_VLCausalLMOutputWithPast]:
         r"""
             labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
@@ -1896,11 +1896,11 @@ class Qwen2_5_VLForConditionalGenerationKVOpt(Qwen2_5_VLPreTrainedModel, Generat
         hidden_states = outputs[0]
         logits = self.lm_head(hidden_states)
 
-        ########## itai change ##########
+        ########## lime change ##########
         if desc.approach == 'opt':
             if desc.reference_logits is None:
 
-                reference_desc = KVOptDesc(
+                reference_desc = LimeDesc(
                     deltas_layers=desc.deltas_layers,
                     lambda_kl=desc.lambda_kl,
                     approach='vanila',

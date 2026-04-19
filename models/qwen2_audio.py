@@ -1,183 +1,20 @@
 import torch
 import torch.nn as nn
-from transformers import AutoProcessor, Qwen2AudioForConditionalGeneration
+from transformers import AutoProcessor
 import librosa
 import gc
 from typing import Literal
-from .modeling_qwen2_audio_kv_opt import Qwen2AudioForConditionalGenerationKVOpt
-from .modeling_qwen2_audio_aad import Qwen2AudioForConditionalGenerationAAD
+from modeling.modeling_qwen2_audio_lime import Qwen2AudioForConditionalGenerationKVOpt
 
-from ...descriptor import KVOptDesc
+from descriptor import LimeDesc
 
 import sys
 sys.path.append('/app/dev/')
 from lrp.patches import patch_qwen2_audio
 
-from utils import print_cuda_mem
 
 QWEN2_AUDIO_ID = 'Qwen/Qwen2-Audio-7B-Instruct'
-MAX_AUDIO_DURATION = 20 #30 [sec]
-
-class Qwen2AudioAAD(nn.Module):
-    def __init__(
-            self,
-    ):
-        super().__init__()
-        self.model = Qwen2AudioForConditionalGenerationAAD.from_pretrained(
-            QWEN2_AUDIO_ID,
-            attn_implementation="eager",
-        )
-
-        self.processor = AutoProcessor.from_pretrained(QWEN2_AUDIO_ID)
-        self.audio_encoder = self.model.audio_tower
-        
-        # freeze parameters
-        for p in self.model.parameters():
-            p.requires_grad = False    
-       
-    def get_inputs_for_forward(
-            self,
-            instruction: str,
-            wav_path: str,
-            device_num: int = 0
-    ):
-        device = f'cuda:{device_num}' if torch.cuda.is_available() else 'cpu'
-        sr = self.processor.feature_extractor.sampling_rate
-        audio_array, _ = librosa.load(wav_path, sr=sr)
-
-        # create conversation with proper audio token format
-        conversation = [
-            {'role': 'system', 'content': 'You are a helpful assistant.'}, 
-            {"role": "user", "content": [
-                {"type": "audio", "audio": audio_array},
-                {"type": "text", "text": instruction},
-            ]},
-        ]
-
-        prmopt = self.processor.apply_chat_template(
-            conversation,
-            add_generation_prompt=True,
-            tokenize=False
-        )
-        inputs = self.processor(
-            text=prmopt,
-            audio=[audio_array],
-            sampling_rate=sr, 
-            return_tensors="pt",
-            padding=True
-        )
-        inputs = {k: v.to(device) if hasattr(v, 'to') else v for k, v in inputs.items()}
-
-        return inputs
-
-    def generate(
-            self,
-            inputs: dict,
-            max_new_tokens: int = 120,
-            plot: bool = False
-    ):
-        _, T = inputs["input_ids"].shape
-
-        with torch.inference_mode():
-            output = self.model.generate(
-                **inputs,
-                output_attentions=False,
-                max_new_tokens=max_new_tokens,
-                use_cache=False,
-                return_dict_in_generate=True
-            )
-        generated_only_ids = output.sequences[:, T:]
-        response = self.processor.batch_decode(
-            generated_only_ids,
-            skip_special_tokens=True,
-            clean_up_tokenization_spaces=False
-        )[0]
-
-        if plot:
-            print(f"Model's output: {response}" )
-
-        return response
-
-class Qwen2Audio(nn.Module):
-    def __init__(
-            self,
-    ):
-        super().__init__()
-        self.model = Qwen2AudioForConditionalGeneration.from_pretrained(
-            QWEN2_AUDIO_ID,
-            attn_implementation="eager",
-        )
-
-        self.processor = AutoProcessor.from_pretrained(QWEN2_AUDIO_ID)
-        self.audio_encoder = self.model.audio_tower
-        
-        # freeze parameters
-        for p in self.model.parameters():
-            p.requires_grad = False    
-       
-    def get_inputs_for_forward(
-            self,
-            instruction: str,
-            wav_path: str,
-            device_num: int = 0
-    ):
-        device = f'cuda:{device_num}' if torch.cuda.is_available() else 'cpu'
-        sr = self.processor.feature_extractor.sampling_rate
-        audio_array, _ = librosa.load(wav_path, sr=sr)
-
-        # create conversation with proper audio token format
-        conversation = [
-            {'role': 'system', 'content': 'You are a helpful assistant.'}, 
-            {"role": "user", "content": [
-                {"type": "audio", "audio": audio_array},
-                {"type": "text", "text": instruction},
-            ]},
-        ]
-
-        prmopt = self.processor.apply_chat_template(
-            conversation,
-            add_generation_prompt=True,
-            tokenize=False
-        )
-        inputs = self.processor(
-            text=prmopt,
-            audio=[audio_array],
-            sampling_rate=sr, 
-            return_tensors="pt",
-            padding=True
-        )
-        inputs = {k: v.to(device) if hasattr(v, 'to') else v for k, v in inputs.items()}
-
-        return inputs
-
-    def generate(
-            self,
-            inputs: dict,
-            max_new_tokens: int = 120,
-            plot: bool = False
-    ):
-        _, T = inputs["input_ids"].shape
-
-        with torch.inference_mode():
-            output = self.model.generate(
-                **inputs,
-                output_attentions=False,
-                max_new_tokens=max_new_tokens,
-                use_cache=True,
-                return_dict_in_generate=True
-            )
-        generated_only_ids = output.sequences[:, T:]
-        response = self.processor.batch_decode(
-            generated_only_ids,
-            skip_special_tokens=True,
-            clean_up_tokenization_spaces=False
-        )[0]
-
-        if plot:
-            print(f"Model's output: {response}" )
-
-        return response
-
+MAX_AUDIO_DURATION = 30
 class Qwen2AudioKVOpt(nn.Module):
     def __init__(
         self,
@@ -240,7 +77,7 @@ class Qwen2AudioKVOpt(nn.Module):
     def _outputs_for_relevance(
         self,
         inputs: dict,
-        desc: KVOptDesc,
+        desc: LimeDesc,
         output_attentions: bool,
         position_ids,
     ):
@@ -416,8 +253,8 @@ class Qwen2AudioKVOpt(nn.Module):
         top_k = self.model.generation_config.top_k if do_sample else 0
         top_p = self.model.generation_config.top_p if do_sample else 1.0
 
-        # initilize KVOpt description
-        desc = KVOptDesc(
+        # initilize LimeDesc description
+        desc = LimeDesc(
             deltas_layers=deltas_layers,
             lambda_kl=lambda_kl,
             approach=approach,

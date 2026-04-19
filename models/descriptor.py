@@ -1,7 +1,7 @@
 from typing import Literal, Optional
 import torch
 
-class KVOptDesc:
+class LimeDesc:
     def __init__(
             self,
             deltas_layers: list,

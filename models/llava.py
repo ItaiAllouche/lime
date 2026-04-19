@@ -7,96 +7,13 @@ from typing import Literal
 import copy
 import gc
 
-from ...descriptor import KVOptDesc
-from .modeling_llama_kv_opt import LlamaForCausalLM
-
-import sys
-sys.path.append('/app/dev/')
+from descriptor import LimeDesc
+from models.modeling.modeling_llama_lime import LlamaForCausalLM
 from lrp.patches import patch_llava
-from plot import plot_relevance
 from utils import compare_model_to_reference
 
 LLAVA_1_5_ID = 'llava-hf/llava-1.5-7b-hf'
-
-class Llava(nn.Module):
-    def __init__(
-        self,
-    ):
-        super().__init__()
-        self.model = LlavaForConditionalGeneration.from_pretrained(
-            LLAVA_1_5_ID,
-            attn_implementation="eager",
-        )
-
-        self.processor = AutoProcessor.from_pretrained(LLAVA_1_5_ID)
-
-        # freeze parameters
-        for p in self.model.parameters():
-            p.requires_grad = False
-
-    def get_inputs_for_forward(
-        self,
-        instruction: str,
-        image_path: str,
-        device_num: int = 0,
-    ):
-        device = f'cuda:{device_num}' if torch.cuda.is_available() else 'cpu'
-
-        image = Image.open(image_path).convert("RGB")
-
-        # create conversation with proper audio token format
-        conversation = [
-            {"role": "user", "content": [
-                {"type": "text", "text": instruction},
-                {"type": "image"},
-                ],
-            },
-        ]
-
-        prompt = self.processor.apply_chat_template(
-            conversation,
-            add_generation_prompt=True,
-            tokenize=False
-        )
-        inputs = self.processor(
-            images=image,
-            text=prompt, 
-            return_tensors="pt",
-            padding=True
-        )
-        inputs = {k: v.to(device) if hasattr(v, 'to') else v for k, v in inputs.items()}
-
-        return inputs
-    
-    def generate(
-        self,
-        inputs: dict,
-        max_new_tokens: int = 120,
-        plot: bool = False
-    ):
-        _, T = inputs["input_ids"].shape
-
-        with torch.inference_mode():
-            output = self.model.generate(
-                **inputs,
-                output_attentions=False,
-                max_new_tokens=max_new_tokens,
-                use_cache=True,
-                return_dict_in_generate=True
-            )
-        generated_only_ids = output.sequences[:, T:]
-        response = self.processor.batch_decode(
-            generated_only_ids,
-            skip_special_tokens=True,
-            clean_up_tokenization_spaces=False
-        )[0]
-
-        if plot:
-            print(f"Model's output: {response}" )
-
-        return response
-
-class LlavaKVOpt(nn.Module):
+class LlavaLIME(nn.Module):
     def __init__(
         self,
         verbose: bool = True
@@ -167,7 +84,7 @@ class LlavaKVOpt(nn.Module):
     def _outputs_for_relevance(
         self,
         inputs: dict,
-        desc: KVOptDesc, 
+        desc: LimeDesc, 
         position_ids
     ):
         model = self.model
@@ -268,7 +185,6 @@ class LlavaKVOpt(nn.Module):
     def generate(
         self,
         inputs: dict,
-        approach: Literal['opt', 'vanila'], 
         opt_steps: int = 7,
         opt_lr: int = 0.0003,
         lambda_kl: float = 0.1,
@@ -315,7 +231,6 @@ class LlavaKVOpt(nn.Module):
                 1,
                 self.model.language_model.config.num_attention_heads,
                 input_ids.shape[1],
-                # modality_eos_idx-modality_bos_idx+1,
                 head_dim,
                 device=device,
                 requires_grad=True
@@ -323,7 +238,6 @@ class LlavaKVOpt(nn.Module):
             delta_v = torch.zeros(
                 1,
                 self.model.language_model.config.num_attention_heads,
-                # modality_eos_idx-modality_bos_idx+1,
                 input_ids.shape[1],
                 head_dim,
                 device=device,
@@ -331,12 +245,7 @@ class LlavaKVOpt(nn.Module):
             )            
             kv_deltas[layer_idx] = (delta_k, delta_v)
             delta_params.extend([delta_k, delta_v])
-            # kv_deltas[layer_idx] = (delta_v)
-            # delta_params.extend([delta_v])
-            # kv_deltas[layer_idx] = (delta_k)
-            # delta_params.extend([delta_k])
             
-
         self.model.eval()
 
         # adam optimizer for deltas kv tuning
@@ -350,10 +259,10 @@ class LlavaKVOpt(nn.Module):
         top_p = self.model.language_model.config.top_p if hasattr(self.model.language_model.config, 'top_p') else 1.0
 
         # initialize KVOpt description
-        desc = KVOptDesc(
+        desc = LimeDesc(
                     deltas_layers=deltas_layers,
                     lambda_kl=lambda_kl,
-                    approach=approach,
+                    approach='opt',
                     modality_bos_idx=modality_bos_idx,
                     modality_eos_idx=modality_eos_idx,
                     prompt_len=T,
@@ -381,111 +290,61 @@ class LlavaKVOpt(nn.Module):
                 # forward + optimization step
                 optimizer.zero_grad()
 
-                if approach == 'opt':
-                    print(f'Adam step: {opt_step}')
+                print(f'Adam step: {opt_step}')
 
-                    # compute relevance using LRP
-                    outputs, stash = self._outputs_for_relevance(
-                        inputs=model_inputs,
-                        desc=desc,
-                        position_ids=position_ids
+                # compute relevance using LRP
+                outputs, stash = self._outputs_for_relevance(
+                    inputs=model_inputs,
+                    desc=desc,
+                    position_ids=position_ids
+                )
+                kl_loss = desc.kl_loss
+
+                assert kl_loss is not None, "KL loss is None"
+                                                    
+                nonpad_idx = torch.where(model_inputs['attention_mask'][0].to(torch.bool))[0].tolist()
+                target_pos = nonpad_idx[-1] # last non-padded token
+
+                with torch.no_grad():
+                    next_token = self._decode(
+                        outputs.logits,
+                        input_ids,
+                        do_sample,
+                        temperature,
+                        repetition_penalty,
+                        top_k,
+                        top_p
                     )
-                    kl_loss = desc.kl_loss
 
-                    assert kl_loss is not None, "KL loss is None when approach='opt'."
-                                                            
-                    nonpad_idx = torch.where(model_inputs['attention_mask'][0].to(torch.bool))[0].tolist()
-                    target_pos = nonpad_idx[-1] # last non-padded token
+                # next predicted token id at that position (for batch 0)
+                next_id = int(next_token[0, 0].item())
+                target_logit = outputs.logits[0, target_pos, next_id]
+                merged = stash["merged"]
 
-                    with torch.no_grad():
-                        next_token = self._decode(
-                            outputs.logits,
-                            input_ids,
-                            do_sample,
-                            temperature,
-                            repetition_penalty,
-                            top_k,
-                            top_p
-                        )
+                grad_merged = torch.autograd.grad(
+                    outputs=target_logit,
+                    inputs=merged,
+                    create_graph=True,
+                    allow_unused=False,
+                )[0]        
 
-                    # next predicted token id at that position (for batch 0)
-                    next_id = int(next_token[0, 0].item())
-                    target_logit = outputs.logits[0, target_pos, next_id]
-                    merged = stash["merged"]
+                # token-level relevance as grad * input
+                relevance = (grad_merged[0] * merged[0]).sum(-1)
 
-                    grad_merged = torch.autograd.grad(
-                        outputs=target_logit,
-                        inputs=merged,
-                        create_graph=True,
-                        allow_unused=False,
-                    )[0]        
+                if output_relevance and opt_step + 1 == opt_steps:
+                    # normalized_relevance = relevance / (relevance.abs().max().detach() + 1e-12)
+                    relevances.append(relevance.detach().to(torch.float32).cpu().numpy())                        
 
-                    # token-level relevance as grad * input
-                    relevance = (grad_merged[0] * merged[0]).sum(-1)
+                tau = 0.1
+                log_probs = nn.functional.log_softmax(relevance / tau, dim=-1)
+                relevance_loss = - (log_probs[desc.modality_bos_idx:desc.modality_eos_idx+1].mean())
+                loss = lambda_kl * kl_loss + relevance_loss
 
-                    if output_relevance and opt_step + 1 == opt_steps:
-                        # normalized_relevance = relevance / (relevance.abs().max().detach() + 1e-12)
-                        relevances.append(relevance.detach().to(torch.float32).cpu().numpy())                        
-
-                    tau = 0.1
-                    log_probs = nn.functional.log_softmax(relevance / tau, dim=-1)
-                    relevance_loss = - (log_probs[desc.modality_bos_idx:desc.modality_eos_idx+1].mean())
-                    loss = lambda_kl * kl_loss + relevance_loss
-
-                    print(f'KL: {kl_loss.item():.4f} | Image Relevance: {float(-relevance_loss):.4f} | Overall loss: {loss.item():.4f}')
-        
-                    loss.backward()
-                    optimizer.step()                    
+                print(f'KL: {kl_loss.item():.4f} | Image Relevance: {float(-relevance_loss):.4f} | Overall loss: {loss.item():.4f}')
+    
+                loss.backward()
+                optimizer.step()                    
                     
-                # approach = vanila
-                else:
-                    if output_relevance:
-                        outputs, stash = self._outputs_for_relevance(
-                            inputs=model_inputs,
-                            desc=desc,
-                            position_ids=position_ids
-                        )
-
-                        nonpad_idx = torch.where(model_inputs['attention_mask'][0].to(torch.bool))[0].tolist()
-                        target_pos = nonpad_idx[-1] # last non-padded token
-
-                        with torch.no_grad():
-                            next_token = self._decode(
-                                outputs.logits,
-                                input_ids,
-                                do_sample,
-                                temperature,
-                                repetition_penalty,
-                                top_k,
-                                top_p
-                            )
-
-                        # next predicted token id at that position (for batch 0)
-                        next_id = int(next_token[0, 0].item())
-                        target_logit = outputs.logits[0, target_pos, next_id]
-                        merged = stash["merged"]
-
-                        grad_merged = torch.autograd.grad(
-                            outputs=target_logit,
-                            inputs=merged,
-                            create_graph=False,
-                            allow_unused=False,
-                        )[0]        
-
-                        # token-level relevance as grad * input
-                        relevance = (grad_merged[0] * merged[0]).sum(-1)
-                        # normalized_relevance = relevance / (relevance.abs().max().detach() + 1e-12)
-                        relevances.append(relevance.detach().to(torch.float32).cpu().numpy())  
-
-                    else:
-                        outputs = self.model(
-                            **model_inputs,
-                            use_cache=False,
-                            output_attentions=False,
-                            position_ids=position_ids,
-                            desc=desc,
-                        )
-
             # decode next token from last logits
             with torch.no_grad():
                 next_token = self._decode(
@@ -536,7 +395,6 @@ class LlavaKVOpt(nn.Module):
                 delta_k = torch.zeros(
                     1,
                     self.model.language_model.config.num_attention_heads,
-                    # modality_eos_idx-modality_bos_idx+1,
                     input_ids.shape[1],
                     head_dim,
                     device=device,
@@ -545,7 +403,6 @@ class LlavaKVOpt(nn.Module):
                 delta_v = torch.zeros(
                     1,
                     self.model.language_model.config.num_attention_heads,
-                    # modality_eos_idx-modality_bos_idx+1,
                     input_ids.shape[1],
                     head_dim,
                     device=device,
@@ -553,10 +410,6 @@ class LlavaKVOpt(nn.Module):
                 )
                 kv_deltas[layer_idx] = (delta_k, delta_v)
                 delta_params.extend([delta_k, delta_v])
-                # kv_deltas[layer_idx] = (delta_v)
-                # delta_params.extend([delta_v])
-                # kv_deltas[layer_idx] = (delta_k)
-                # delta_params.extend([delta_k])
             
             optimizer = torch.optim.Adam(delta_params, lr=opt_lr)
             desc.set_kv_deltas(kv_deltas)

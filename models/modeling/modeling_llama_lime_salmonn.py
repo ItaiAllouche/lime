@@ -20,7 +20,7 @@
 """ PyTorch LLaMA model."""
 import math
 from typing import List, Optional, Tuple, Union
-import copy ########## itai change ##########
+import copy ########## lime change ##########
 
 import torch
 import torch.utils.checkpoint
@@ -33,13 +33,13 @@ from transformers.modeling_utils import PreTrainedModel
 from transformers.utils import add_start_docstrings, add_start_docstrings_to_model_forward, logging, replace_return_docstrings
 from transformers.models.llama.configuration_llama import LlamaConfig
 
-from ...descriptor import KVOptDesc
+from descriptor import LimeDesc
 
 logger = logging.get_logger(__name__)
 
 _CONFIG_FOR_DOC = "LlamaConfig"
 
-ALL_ATTENTION_FUNCTIONS = {} ########## itai change ##########
+ALL_ATTENTION_FUNCTIONS = {} ########## lime change ##########
 
 
 # Copied from transformers.models.bart.modeling_bart._make_causal_mask
@@ -173,7 +173,7 @@ def eager_attention_forward(
     attention_mask: Optional[torch.Tensor] = None,
 ):
 
-    ########## itai change ##########
+    ########## lime change ##########
     # apply kv delts only on the relevant layers
     if module.layer_idx in desc.deltas_layers and desc.approach == 'opt':
         audio_bos = desc.modality_bos_idx
@@ -190,7 +190,7 @@ def eager_attention_forward(
         # apply deltas only on audio keys
         key[:, :, :, :] += delta_k_exp
         value[:, :, :, :] += delta_v_exp                
-    ########## itai change ##########
+    ########## lime change ##########
 
     attn_weights = torch.matmul(query, key.transpose(2, 3)) / math.sqrt(module.head_dim)
 
@@ -235,7 +235,7 @@ class LlamaAttention(nn.Module):
         super().__init__()
         self.config = config
         self.hidden_size = config.hidden_size
-        self.layer_idx = layer_idx ########## itai change ##########
+        self.layer_idx = layer_idx ########## lime change ##########
         self.num_heads = config.num_attention_heads
         self.head_dim = self.hidden_size // self.num_heads
         self.max_position_embeddings = config.max_position_embeddings
@@ -256,7 +256,7 @@ class LlamaAttention(nn.Module):
 
     def forward(
         self,
-        desc: dict, ########## itai change ##########
+        desc: dict, ########## lime change ##########
         hidden_states: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
@@ -315,7 +315,7 @@ class LlamaDecoderLayer(nn.Module):
 
     def forward(
         self,
-        desc, ########## itai change ##########
+        desc, ########## lime change ##########
         hidden_states: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
@@ -344,7 +344,7 @@ class LlamaDecoderLayer(nn.Module):
         # Self Attention
         hidden_states, self_attn_weights, present_key_value = self.self_attn(
             hidden_states=hidden_states,
-            desc=desc, ########## itai change ##########
+            desc=desc, ########## lime change ##########
             attention_mask=attention_mask,
             position_ids=position_ids,
             past_key_value=past_key_value,
@@ -536,7 +536,7 @@ class LlamaModel(LlamaPreTrainedModel):
     @add_start_docstrings_to_model_forward(LLAMA_INPUTS_DOCSTRING)
     def forward(
         self,
-        desc, ########## itai change ##########
+        desc, ########## lime change ##########
         input_ids: torch.LongTensor = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
@@ -631,7 +631,7 @@ class LlamaModel(LlamaPreTrainedModel):
             else:
                 layer_outputs = decoder_layer(
                     hidden_states=hidden_states,
-                    desc=desc, ########## itai change ##########
+                    desc=desc, ########## lime change ##########
                     attention_mask=attention_mask,
                     position_ids=position_ids,
                     past_key_value=past_key_value,
@@ -669,14 +669,14 @@ class LlamaForCausalLM(LlamaPreTrainedModel):
         super().__init__(config)
         self.model = LlamaModel(config)
 
-        ########## itai change ##########
+        ########## lime change ##########
         self.reference_model = copy.deepcopy(self.model)
         # self.reference_model = LlamaModel(config)
         # self.reference_model.load_state_dict(self.model.state_dict())
         self.reference_model.eval()
         for p in self.reference_model.parameters():
             p.requires_grad = False
-        ########## itai change ##########           
+        ########## lime change ##########           
 
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
 
@@ -705,7 +705,7 @@ class LlamaForCausalLM(LlamaPreTrainedModel):
     @replace_return_docstrings(output_type=CausalLMOutputWithPast, config_class=_CONFIG_FOR_DOC)
     def forward(
         self,
-        desc, ########## itai change ##########
+        desc, ########## lime change ##########
         input_ids: torch.LongTensor = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
@@ -768,11 +768,11 @@ class LlamaForCausalLM(LlamaPreTrainedModel):
         logits = self.lm_head(hidden_states)
         loss = None
 
-        ########## itai change ##########
+        ########## lime change ##########
         if desc.approach == 'opt':
             if desc.reference_logits is None:
 
-                reference_desc = KVOptDesc(
+                reference_desc = LimeDesc(
                     deltas_layers=desc.deltas_layers,
                     lambda_kl=desc.lambda_kl,
                     approach='vanila',
@@ -817,7 +817,7 @@ class LlamaForCausalLM(LlamaPreTrainedModel):
                 log_target=False
             )
             desc.set_kl_loss(kl_loss)
-        ########## itai change ##########     
+        ########## lime change ##########     
 
         if labels is not None:
             # Shift so that tokens < n predict n
