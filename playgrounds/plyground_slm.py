@@ -4,14 +4,11 @@ import argparse
 import sys
 sys.path.append('../')
 from utils import clean_gpu_cache
-from models.qwenvl2_5 import QwenVL2_5LIME
-from models.qwenvl import QwenVLLIME
-from models.llava import LlavaLIME  
+from models.qwen2_audio import Qwen2AudioLIME
+
 
 MODELS_DICT = {
-    'qwenvl2_5': QwenVL2_5LIME,
-    'qwenvl': QwenVLLIME,
-    'llava': LlavaLIME,
+    'qwen2audio': Qwen2AudioLIME,
 }
 
 def main(args):
@@ -26,14 +23,14 @@ def main(args):
     print(f"Cleaned GPU cache before loading model on GPU {args.device_num}")    
 
     print(f'Loading {args.model}...')
-    model = MODELS_DICT[args.model](verbose=args.verbose).to(device, dtype=torch.bfloat16)
+    model = MODELS_DICT[args.model]().to(device, dtype=torch.bfloat16)
     inputs = model.get_inputs_for_forward(
         instruction=args.prompt,
-        image_path=args.image_path,
+        wav_path=args.audio_path,
         device_num=args.device_num,
     )
 
-    print(f'Generating output...')
+    print(f'\nGenerating output...')
     output = model.generate(
         inputs=inputs,
         max_new_tokens=args.max_new_tokens,
@@ -51,15 +48,15 @@ if __name__ == "__main__":
         choices=['qwenvl', 'llava', 'qwenvl2_5']
     )  
     parser.add_argument(
-        "--image_path",
+        "--audio_path",
         type=str,
         default='/app/datasets/coco/val2014',
-        help="Path for image to process",
+        help="Path for audio to process",
     )
     parser.add_argument(
         "--prompt",
         type=str,
-        default="Describe the image in detail.",
+        default="Transcribe the audio.",
         help="Prompt used for caption generation",
     )
     parser.add_argument(
@@ -74,12 +71,6 @@ if __name__ == "__main__":
         default=0,
         help="Starting GPU device index",
     )
-    parser.add_argument(
-        "--verbose",
-        type=bool,
-        default=False,
-        help="Verbose for model initialization",
-    )    
 
     args = parser.parse_args()
 

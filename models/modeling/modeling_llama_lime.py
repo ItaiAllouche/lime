@@ -60,6 +60,10 @@ if is_torch_flex_attn_available():
 
     from transformers.integrations.flex_attention import make_flex_block_causal_mask
 
+import sys
+import os
+sys.path.append(os.path.dirname(__file__))  # Add modeling/ directory
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))  # Add models/ directory
 from descriptor import LimeDesc
 
 logger = logging.get_logger(__name__)
@@ -850,7 +854,6 @@ class LlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
         )
 
         # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
-        print('student forward...')
         outputs: BaseModelOutputWithPast = self.model(
             desc=desc, ######## itai change ########
             input_ids=input_ids,
@@ -885,7 +888,6 @@ class LlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
                 )
         
                 # forward of the reference model
-                print('reference forward...')
                 with torch.no_grad():
                     reference_outputs: BaseModelOutputWithPast = self.reference_model(
                         desc=reference_desc,

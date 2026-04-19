@@ -1335,7 +1335,6 @@ class Qwen2AudioForConditionalGenerationKVOpt(Qwen2AudioPreTrainedModel, Generat
         ########## lime change ##########
 
         # forward of the student model
-        print('student forward...')
         outputs = self.language_model(
             attention_mask=attention_mask,
             position_ids=position_ids,
@@ -1355,7 +1354,6 @@ class Qwen2AudioForConditionalGenerationKVOpt(Qwen2AudioPreTrainedModel, Generat
             if desc.reference_logits is None:
         
                 # forward of the reference model
-                print('reference forward...')
                 with torch.no_grad():
                     reference_outputs = self.reference_model(
                         attention_mask=attention_mask,

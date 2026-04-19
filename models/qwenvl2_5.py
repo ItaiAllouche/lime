@@ -5,6 +5,10 @@ from transformers import AutoProcessor
 import copy
 import gc
 
+import sys
+import os
+sys.path.append(os.path.dirname(__file__))
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))  
 from descriptor import LimeDesc
 from modeling.modeling_qwen2_5_vl_lime import Qwen2_5_VLForConditionalGeneration, Qwen2_5_VLModel
 from lrp.patches import patch_qwenvl2_5
@@ -217,7 +221,9 @@ class QwenVL2_5LIME(nn.Module):
         modality_bos_idx = next(i for i, t in enumerate(tokens) if t == "<|vision_start|>")
         modality_eos_idx = next(i for i, t in enumerate(tokens) if t == "<|vision_end|>")
         eos_id = self.processor.tokenizer.eos_token_id
-        print(f'modality_bos_idx: {modality_bos_idx} | audio_eos_idx: {modality_eos_idx}')
+
+        if plot:
+            print(f'modality_bos_idx: {modality_bos_idx} | audio_eos_idx: {modality_eos_idx}')
         
         # initlizte trainable kv deltas per layer - not registerd in the model 
         kv_deltas = {}
@@ -268,8 +274,9 @@ class QwenVL2_5LIME(nn.Module):
         
         # generation process
         for step in range(max_new_tokens):
-            print(f'\n---------------------')
-            print(f'Generation step: {step}')
+            if plot:
+                print(f'\n---------------------')
+                print(f'Generation step: {step}')
 
             # optimize k and v by Adam opt
             for opt_step in range(opt_steps):
@@ -286,7 +293,8 @@ class QwenVL2_5LIME(nn.Module):
                 # forward + optimization step
                 optimizer.zero_grad()
 
-                print(f'Adam step: {opt_step}')
+                if plot:
+                    print(f'Adam step: {opt_step}')
                 
                 # compute relevance using LRP
                 outputs, stash = self._outputs_for_relevance(
@@ -337,7 +345,8 @@ class QwenVL2_5LIME(nn.Module):
                 relevance_loss = - (log_probs[desc.modality_bos_idx:desc.modality_eos_idx+1].mean())
                 loss = lambda_kl * kl_loss + relevance_loss
 
-                print(f'KL: {kl_loss.item():.4f} | Image Relevance: {float(-relevance_loss):.4f} | Overall loss: {loss.item():.4f}')
+                if plot:
+                    print(f'KL: {kl_loss.item():.4f} | Image Relevance: {float(-relevance_loss):.4f} | Overall loss: {loss.item():.4f}')
                 
                 loss.backward()
                 optimizer.step()
@@ -358,7 +367,8 @@ class QwenVL2_5LIME(nn.Module):
 
             # early stop if EOS everywhere
             if eos_id is not None and (next_token == eos_id).all():
-                print(f'---------------------')
+                if plot:
+                    print(f'---------------------')
                 break      
 
             # decode current answer

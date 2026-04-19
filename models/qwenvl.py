@@ -4,6 +4,10 @@ import torch.nn as nn
 import gc
 import copy
 
+import sys
+import os
+sys.path.append(os.path.dirname(__file__))
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))  
 from descriptor import LimeDesc
 from modeling.modeling_qwen_lime import QWenLMHeadModel, make_context, get_stop_words_ids, decode_tokens
 from lrp.patch_qwenvl import patch_qwenvl
@@ -217,7 +221,9 @@ class QwenVLLIME(nn.Module):
         modality_bos_idx = input_ids_list.index(image_start_id)
         modality_eos_idx = modality_bos_idx + num_image_tokens
         modality_eos_idx = min(modality_eos_idx, len(input_ids_list) - 1)
-        print(f'modality_bos_idx: {modality_bos_idx} | modality_eos_idx: {modality_eos_idx}')
+        
+        if plot:
+            print(f'modality_bos_idx: {modality_bos_idx} | modality_eos_idx: {modality_eos_idx}')
         
         # initialize trainable KV deltas per layer
         kv_deltas = {}
@@ -270,8 +276,9 @@ class QwenVLLIME(nn.Module):
         
         # Generation process
         for step in range(max_new_tokens):
-            print(f'\n---------------------')
-            print(f'Generation step: {step}')
+            if plot:
+                print(f'\n---------------------')
+                print(f'Generation step: {step}')
 
             # optimize K and V by Adam opt
             for opt_step in range(opt_steps):
@@ -287,7 +294,8 @@ class QwenVLLIME(nn.Module):
                 # Forward + optimization step
                 optimizer.zero_grad()
 
-                print(f'Adam step: {opt_step}')
+                if plot:
+                    print(f'Adam step: {opt_step}')
                 
                 # Compute relevance using LRP
                 outputs, stash = self._outputs_for_relevance(
@@ -336,7 +344,8 @@ class QwenVLLIME(nn.Module):
                 relevance_loss = -(log_probs[desc.modality_bos_idx:desc.modality_eos_idx+1].mean())
                 loss = lambda_kl * kl_loss + relevance_loss
 
-                print(f'KL: {kl_loss.item():.4f} | Image Relevance: {float(-relevance_loss):.4f} | Overall loss: {loss.item():.4f}')
+                if plot:
+                    print(f'KL: {kl_loss.item():.4f} | Image Relevance: {float(-relevance_loss):.4f} | Overall loss: {loss.item():.4f}')
                 
                 loss.backward()
                 optimizer.step()
@@ -366,7 +375,8 @@ class QwenVLLIME(nn.Module):
             
             # Check if EOS
             if eos_id is not None and next_token[0, 0].item() == eos_id:
-                print(f"Stopping: Hit EOS token")
+                if plot:
+                    print(f"Stopping: Hit EOS token")
                 break            
             
             input_ids = torch.cat([input_ids, next_token], dim=1)

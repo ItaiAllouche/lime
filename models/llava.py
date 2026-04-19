@@ -7,8 +7,12 @@ from typing import Literal
 import copy
 import gc
 
+import sys
+import os
+sys.path.append(os.path.dirname(__file__))
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))  
 from descriptor import LimeDesc
-from models.modeling.modeling_llama_lime import LlamaForCausalLM
+from modeling.modeling_llama_lime import LlamaForCausalLM
 from lrp.patches import patch_llava
 from utils import compare_model_to_reference
 
@@ -195,7 +199,7 @@ class LlavaLIME(nn.Module):
     ):
         relevances = [] if output_relevance else None
 
-        print(f'opt_steps={opt_steps} | opt_lr={opt_lr} | lambda_kl={lambda_kl}')
+        print(f'Start generate response with:\nopt_steps={opt_steps} | opt_lr={opt_lr} | lambda_kl={lambda_kl}')
         
         device = next(self.model.parameters()).device
         inputs = {k: v.to(device) if hasattr(v, 'to') else v for k, v in inputs.items()}
@@ -221,7 +225,8 @@ class LlavaLIME(nn.Module):
             raise ValueError("No <image> tokens found in input!")
         
         eos_id = self.processor.tokenizer.eos_token_id
-        print(f'modality_bos_idx: {modality_bos_idx} | modality_eos_idx: {modality_eos_idx}')
+        if plot:
+            print(f'modality_bos_idx: {modality_bos_idx} | modality_eos_idx: {modality_eos_idx}')
         
         # initialize trainable kv deltas per layer - not registered in the model 
         kv_deltas = {}
@@ -272,8 +277,9 @@ class LlavaLIME(nn.Module):
         
         # generation process
         for step in range(max_new_tokens):
-            print(f'\n---------------------')
-            print(f'Generation step: {step}')
+            if plot:
+                print(f'\n---------------------')
+                print(f'Generation step: {step}')
 
             # optimize k and v by Adam opt
             for opt_step in range(opt_steps):
@@ -290,7 +296,8 @@ class LlavaLIME(nn.Module):
                 # forward + optimization step
                 optimizer.zero_grad()
 
-                print(f'Adam step: {opt_step}')
+                if plot:
+                    print(f'Adam step: {opt_step}')
 
                 # compute relevance using LRP
                 outputs, stash = self._outputs_for_relevance(
@@ -340,7 +347,8 @@ class LlavaLIME(nn.Module):
                 relevance_loss = - (log_probs[desc.modality_bos_idx:desc.modality_eos_idx+1].mean())
                 loss = lambda_kl * kl_loss + relevance_loss
 
-                print(f'KL: {kl_loss.item():.4f} | Image Relevance: {float(-relevance_loss):.4f} | Overall loss: {loss.item():.4f}')
+                if plot:
+                    print(f'KL: {kl_loss.item():.4f} | Image Relevance: {float(-relevance_loss):.4f} | Overall loss: {loss.item():.4f}')
     
                 loss.backward()
                 optimizer.step()                    
@@ -361,7 +369,8 @@ class LlavaLIME(nn.Module):
 
             # early stop if EOS everywhere
             if eos_id is not None and (next_token == eos_id).all():
-                print(f'---------------------')
+                if plot:
+                    print(f'---------------------')
                 break      
 
             # decode current answer

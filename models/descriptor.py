@@ -1,13 +1,10 @@
 from typing import Literal, Optional
 import torch
-
 class LimeDesc:
     def __init__(
             self,
             deltas_layers: list,
             lambda_kl: float,
-            lambda_relevance_multimodal: float,
-            lambda_relevance_text: float,
             approach: Literal['opt', 'vanila'],
             modality_bos_idx: int,
             modality_eos_idx: int,
@@ -15,13 +12,11 @@ class LimeDesc:
 ):
         self.deltas_layers = deltas_layers
         self.lambda_kl = lambda_kl
-        self.lambda_relevance_multimodal = lambda_relevance_multimodal
-        self.lambda_relevance_text = lambda_relevance_text
         self.approach = approach
         self.modality_bos_idx = modality_bos_idx
         self.modality_eos_idx = modality_eos_idx
         self.prompt_len = prompt_len
-        self.kv_deltas: dict #torch.Tensor
+        self.kv_deltas: dict
         self.reference_logits: Optional[torch.Tensor]
         self.kl_loss: Optional[float]
         

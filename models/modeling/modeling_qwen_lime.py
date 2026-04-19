@@ -36,10 +36,13 @@ SUPPORT_CUDA = torch.cuda.is_available()
 SUPPORT_BF16 = SUPPORT_CUDA and torch.cuda.is_bf16_supported()
 SUPPORT_FP16 = SUPPORT_CUDA and torch.cuda.get_device_capability(0)[0] >= 7
 
-########## itai change ##########
+########## lime change ##########
+import sys
+import os
+sys.path.append(os.path.dirname(__file__))  # Add modeling/ directory
+sys.path.append(os.path.dirname(os.path.dirname(__file__))) 
 from descriptor import LimeDesc
 
-import sys
 sys.path.insert(0, "/root/.cache/huggingface/modules/transformers_modules/Qwen/Qwen-VL-Chat/f57cfbd358cb56b710d963669ad1bcfb44cdcdd8/")
 
 from configuration_qwen import QWenConfig
@@ -162,7 +165,7 @@ def eager_attention_forward(
     attn_output = attn_output.transpose(1, 2)
 
     return attn_output, attn_weights
-########## itai change ##########
+########## lime change ##########
 
 class QWenAttention(nn.Module):
     def __init__(self, config, layer_idx):
@@ -949,7 +952,6 @@ class QWenLMHeadModel(QWenPreTrainedModel):
             return_dict if return_dict is not None else self.config.use_return_dict
         )
 
-        print('student forward...')
         transformer_outputs = self.transformer(
             input_ids,
             past_key_values=past_key_values,
@@ -984,7 +986,6 @@ class QWenLMHeadModel(QWenPreTrainedModel):
                 )
                
                # forward of the reference model
-                print('reference forward...')
                 with torch.no_grad():
                     reference_outputs = self.reference_transformer(
                         input_ids,

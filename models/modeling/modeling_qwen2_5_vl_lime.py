@@ -52,6 +52,10 @@ if is_flash_attn_available():
 if is_flash_attn_available():
     from transformers.modeling_flash_attention_utils import _flash_attention_forward
 
+import sys
+import os
+sys.path.append(os.path.dirname(__file__))  # Add modeling/ directory
+sys.path.append(os.path.dirname(os.path.dirname(__file__))) 
 from descriptor import LimeDesc
 
 logger = logging.get_logger(__name__)
@@ -1878,7 +1882,6 @@ class Qwen2_5_VLForConditionalGeneration(Qwen2_5_VLPreTrainedModel, GenerationMi
                 position_ids = position_ids.add(delta)
                 position_ids = position_ids.unsqueeze(0).expand(3, -1, -1)
 
-        print('student forward...')
         outputs = self.model(
             input_ids=None,
             position_ids=position_ids,
@@ -1910,7 +1913,6 @@ class Qwen2_5_VLForConditionalGeneration(Qwen2_5_VLPreTrainedModel, GenerationMi
                 )                
 
                # forward of the reference model
-                print('reference forward...')
                 with torch.no_grad():
                     reference_outputs = self.reference_model(
                         input_ids=None,
