@@ -59,7 +59,8 @@ def cleanup(
 
 def compare_model_to_reference(model, verbose: bool = True):
 
-    print("\n=== Weight Comparison ===")
+    if verbose:
+        print("\n=== Weight Comparison ===")
     for name, param in model.model.named_parameters():
         ref_param = dict(model.reference_model.named_parameters())[name]
         are_equal = torch.allclose(param, ref_param, rtol=1e-5, atol=1e-8)
