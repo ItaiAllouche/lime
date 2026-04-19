@@ -4,6 +4,21 @@ import argparse
 import sys
 sys.path.append('../')
 from utils import clean_gpu_cache
+
+# a workaround for loading qwenvl
+# download Qwen-VL-Chat model cache if needed (only for qwenvl model)
+if len(sys.argv) > 1 and '--model' in sys.argv:
+    model_idx = sys.argv.index('--model') + 1
+    if model_idx < len(sys.argv) and sys.argv[model_idx] == 'qwenvl':
+        print("Caching Qwen-VL-Chat model...")
+        try:
+            from transformers import AutoModelForCausalLM, AutoTokenizer
+            tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen-VL-Chat", trust_remote_code=True)
+            model = AutoModelForCausalLM.from_pretrained("Qwen/Qwen-VL-Chat", device_map="cuda", trust_remote_code=True)
+            del model, tokenizer
+        except Exception as e:
+            print(f"Warning: Could not cache Qwen model: {e}")
+
 from models.qwenvl2_5 import QwenVL2_5LIME
 from models.qwenvl import QwenVLLIME
 from models.llava import LlavaLIME  

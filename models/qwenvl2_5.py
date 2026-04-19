@@ -49,7 +49,7 @@ class QwenVL2_5LIME(nn.Module):
         patch_qwenvl2_5(verbose)
 
         # validate equality of between model and reference model
-        compare_model_to_reference(self.model)
+        compare_model_to_reference(self.model, verbose)
 
     def get_inputs_for_forward(
         self,

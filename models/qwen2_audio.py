@@ -39,10 +39,7 @@ class Qwen2AudioLIME(nn.Module):
         
         # freeze parameters
         for p in self.model.parameters():
-            p.requires_grad = False
-
-        # validate equality of between model and reference model
-        # compare_model_to_reference(self.model.language_model)        
+            p.requires_grad = False    
   
     def get_inputs_for_forward(
         self,

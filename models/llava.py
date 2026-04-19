@@ -49,7 +49,7 @@ class LlavaLIME(nn.Module):
         patch_llava(verbose)
 
         # validate equality of between model and reference model
-        compare_model_to_reference(self.model.language_model)
+        compare_model_to_reference(self.model.language_model, verbose)
        
     def get_inputs_for_forward(
         self,

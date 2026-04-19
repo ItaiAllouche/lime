@@ -50,7 +50,7 @@ class QwenVLLIME(nn.Module):
         patch_qwenvl(verbose)
 
         # validate equality of between model and reference model
-        compare_model_to_reference_qwenvl(self.model)
+        compare_model_to_reference_qwenvl(self.model, verbose)
 
     def get_inputs_for_forward(
         self,
@@ -439,8 +439,8 @@ class QwenVLLIME(nn.Module):
             errors='replace'
         )
 
-        generated_token_ids = gen_ids[0].detach().cpu().tolist()
-        generated_tokens = self.processor.tokenizer.convert_ids_to_tokens(generated_token_ids)        
+        generated_token_ids = gen_ids
+        generated_tokens = self.tokenizer.convert_ids_to_tokens(generated_token_ids)        
 
         if plot:
             print(f"Model's output: {response}")

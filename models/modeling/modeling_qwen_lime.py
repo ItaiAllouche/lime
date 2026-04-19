@@ -39,11 +39,20 @@ SUPPORT_FP16 = SUPPORT_CUDA and torch.cuda.get_device_capability(0)[0] >= 7
 ########## lime change ##########
 import sys
 import os
+import glob
 sys.path.append(os.path.dirname(__file__))  # Add modeling/ directory
 sys.path.append(os.path.dirname(os.path.dirname(__file__))) 
 from descriptor import LimeDesc
 
-sys.path.insert(0, "/root/.cache/huggingface/modules/transformers_modules/Qwen/Qwen-VL-Chat/f57cfbd358cb56b710d963669ad1bcfb44cdcdd8/")
+# Dynamically find Qwen-VL-Chat cache
+cache_paths = glob.glob(os.path.expanduser("~/.cache/huggingface/modules/transformers_modules/Qwen/Qwen-VL-Chat/*/"))
+if cache_paths:
+    sys.path.insert(0, cache_paths[0])
+else:
+    # Fallback: try venv path
+    venv_path = os.path.expanduser("~/git_repo/lime/.venv/lib/python3.11/site-packages/transformers_modules/Qwen/Qwen-VL-Chat/")
+    if os.path.exists(venv_path):
+        sys.path.insert(0, venv_path)
 
 from configuration_qwen import QWenConfig
 from qwen_generation_utils import (
