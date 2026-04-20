@@ -97,4 +97,5 @@ print(f"Response: {output['response']}")
 
 ## License
 
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License [![MIT License](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT).
+See the [LICENSE](LICENSE) file for details.
