@@ -94,3 +94,7 @@ print(f"Response: {output['response']}")
 
 - [ ] Add SALMONN implementation  
   *(Not yet included due to environment constraints — SALMONN depends on a specialized setup that is currently incompatible with the rest of the repository.)*
+
+## License
+
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
