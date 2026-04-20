@@ -52,7 +52,12 @@ uv sync
 source .venv/bin/activate
 ```
 
-## CLI Usage (example for llava)
+## Inference
+
+We provide both CLI and Python interfaces for running inference with LIME.
+
+### CLI Usage (example for LLaVA)
+
 ```bash
 cd playgrounds
 uv vlm.py \
@@ -63,7 +68,7 @@ uv vlm.py \
     --max_new_tokens 50
 ```
 
-## Python Usage (example for qwen2audio)
+### Python Usage (example for Qwen2Audio)
 ```python
 import torch
 from models.qwen2_audio import Qwen2AudioLIME
