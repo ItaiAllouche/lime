@@ -69,17 +69,10 @@ RESEARCH ATTRIBUTION
 
 If you use this code in your research, please cite the LIME paper:
 
-@article{allouche2024lime,
+// update this
+@article{allouche2026lime,
   title={Learning to Enhance Modality Usage at Inference Time},
   author={Allouche, Itai and Keshet, Yossi},
   journal={arXiv preprint arXiv:XXXX.XXXXX},
-  year={2024}
-}
-
-And acknowledge the HuggingFace transformers library:
-@inproceedings{wolf2020huggingface,
-  title={Huggingface's transformers: State-of-the-art natural language processing},
-  author={Wolf, Thomas and Debut, Lysandre and others},
-  booktitle={Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing},
-  year={2020}
+  year={2026}
 }
