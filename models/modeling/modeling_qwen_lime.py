@@ -1,7 +1,19 @@
-# Copyright (c) Alibaba Cloud.
+# This file is based on HuggingFace transformers library:
+# https://github.com/huggingface/transformers
 #
-# This source code is licensed under the license found in the
-# LICENSE file in the root directory of this source tree.
+# LIME Modifications:
+# This file has been modified to support Learning Inference-time Modality Enhancement (LIME).
+# All modifications are marked with "########## lime change ##########" comments.
+# The original code structure and license (Apache 2.0) remain unchanged.
+#
+# For the original unmodified version, see:
+# https://github.com/huggingface/transformers/blob/main/src/transformers/models/qwem/modeling_qwem.py
+#
+
+# coding=utf-8
+# Copyright 2022 EleutherAI and the HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
 
 import importlib
 import math
