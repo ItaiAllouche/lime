@@ -3,8 +3,8 @@
 Official PyTorch implementation of the paper "Learning to Enhance Modality Usage at Inference Time".
 
 <h1 align="center">
-  <img src="https://github.com/ItaiAllouche/lime/assets/fig1.png" height="370">
-  <img src="https://github.com/ItaiAllouche/lime/assets/fig2.png" height="370">
+  <img src="assets/fig1.png" height="370">
+  <img src="assets/fig1.png" height="370">
 </h1>
 
 <h2 align="center">
