@@ -24,8 +24,8 @@
 >on perceptual inputs. This objective is enforced through an inference-time updates
 >to the model’s key-value representations, without modifying model parameters or
 >requiring additional training data. We evaluate LIME across multiple multimodal
->benchmarks in both vision and audio domains, demonstrating consistent reduc-
->tions in hallucination and improved grounding while preserving generation quality.
+>benchmarks in both vision and audio domains, demonstrating consistent reductions in hallucination
+>and improved grounding while preserving generation quality.
 >Further analysis shows that LIME increases modality contribution and produces
 >more localized and semantically aligned relevance patterns.*
 </p>
