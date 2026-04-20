@@ -1,0 +1,85 @@
+LIME - Learning Inference-time Modality Enhancement
+Copyright 2026 Itai Allouche, Yossi Keshet
+
+This project contains code derived from the HuggingFace transformers library.
+
+THIRD-PARTY LICENSES AND ATTRIBUTIONS
+=====================================
+
+1. HuggingFace Transformers
+   ========================
+   Source: https://github.com/huggingface/transformers
+   License: Apache License 2.0
+   Copyright: 2022 EleutherAI and the HuggingFace Inc. team
+   
+   Files containing HuggingFace-derived code:
+   - models/modeling/modeling_llama_lime.py (derived from LLaMA modeling)
+   - models/modeling/modeling_qwen_lime.py
+   - models/modeling/modeling_qwen2_5_vl_lime.py
+   - models/modeling/modeling_qwen2_audio_lime.py
+   
+   All modifications are marked with "########## lime change ##########" comments.
+   Original unmodified code is available at:
+   https://github.com/huggingface/transformers/tree/main/src/transformers/models
+
+2. Original LIME Implementation
+   ==============================
+   Authors: Itai Allouche, Yossi Keshet
+   Institution: Technion - Israel Institute of Technology
+   Paper: "Learning to Enhance Modality Usage at Inference Time"
+   
+   Original LIME code files:
+   - models/llava.py
+   - models/qwen2_audio.py
+   - models/qwenvl.py
+   - models/qwenvl2_5.py
+   - lrp/
+   - playgrounds/
+
+MODIFICATIONS
+=============
+
+The LIME team has made the following modifications to HuggingFace transformers code:
+
+1. Added support for Layer-wise Relevance Propagation (LRP)
+2. Implemented training-free inference-time K/V delta optimization
+3. Added LIME descriptor and state management
+4. Integrated modality enhancement mechanisms for multimodal models
+5. Added relevance-based objective computation
+
+All modifications are designed to:
+- Maintain compatibility with the original Apache 2.0 license
+- Preserve the ability to update from upstream HuggingFace
+- Support research and reproducibility
+
+DERIVATIVE WORKS
+================
+
+When distributing this software or derivative works:
+
+1. Include a copy of this NOTICE file
+2. Maintain attribution to both:
+   - Original authors: EleutherAI, HuggingFace team
+   - LIME authors: Itai Allouche, Yossi Keshet
+3. Clearly identify any modifications you make
+4. Include this LICENSE file
+
+RESEARCH ATTRIBUTION
+====================
+
+If you use this code in your research, please cite the LIME paper:
+
+@article{allouche2024lime,
+  title={Learning to Enhance Modality Usage at Inference Time},
+  author={Allouche, Itai and Keshet, Yossi},
+  journal={arXiv preprint arXiv:XXXX.XXXXX},
+  year={2024}
+}
+
+And acknowledge the HuggingFace transformers library:
+@inproceedings{wolf2020huggingface,
+  title={Huggingface's transformers: State-of-the-art natural language processing},
+  author={Wolf, Thomas and Debut, Lysandre and others},
+  booktitle={Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing},
+  year={2020}
+}
