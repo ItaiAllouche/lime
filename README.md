@@ -13,7 +13,7 @@ Official PyTorch implementation of the paper "Learning to Enhance Modality Usage
 
 <p align="center">
 
-> <strong>Abstract.</strong> Multimodal large language models (MLLMs) have demonstrated strong capabilities 
+> <strong>Abstract.</strong> *Multimodal large language models (MLLMs) have demonstrated strong capabilities 
 >across vision and audio-language tasks, yet they remain prone to hallucinations,
 >generating outputs that are inconsistent with the provided perceptual inputs.
 >A key factor underlying this behavior is an imbalance in modality utilization during
