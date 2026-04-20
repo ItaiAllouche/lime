@@ -1,4 +1,4 @@
-# Official-PyTorch-implementation-of-the-paper-"Learning-to-Enhance-Modality-Usage-at-Inference-Time".
+# Official PyTorch implementation of the paper "Learning to Enhance Modality Usage at Inference Time".
 
 <h1 align="center">
   <img src="assets/fig1.jpg" height="370">
