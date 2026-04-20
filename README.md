@@ -84,9 +84,6 @@ inputs = model.get_inputs_for_forward(
 # generate with LIME
 output = model.generate(
     inputs=inputs,
-    opt_steps=7,
-    opt_lr=0.0005,
-    lambda_kl=0.007,
     max_new_tokens=50,
     plot=False
 )
