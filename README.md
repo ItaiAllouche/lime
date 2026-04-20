@@ -3,8 +3,8 @@
 Official PyTorch implementation of the paper "Learning to Enhance Modality Usage at Inference Time".
 
 <h1 align="center">
-  <img src="assets/fig1.png" height="370">
-  <img src="assets/fig1.png" height="370">
+  <img src="assets/fig1.jpg" height="370">
+  <img src="assets/fig2.jpg" height="370">
 </h1>
 
 <h2 align="center">
@@ -57,29 +57,6 @@ uv sync
 # activate the environment
 source .venv/bin/activate
 ```
-
-This commands ..
-
-## Project Structure
-lime/
-├── models/              # Model implementations (LIME wrappers)
-│   ├── llava.py
-│   ├── qwenvl.py
-│   ├── qwenvl2_5.py
-│   ├── qwen2_audio.py
-│   ├── descriptor.py    # LIME descriptor for token tracking
-│   └── modeling/        # Custom model architectures
-├── lrp/                 # Layer-wise Relevance Propagation patches
-│   ├── patches.py
-│   ├── patch_qwen_lime.py
-│   └── patch_llama_lime.py
-├── playgrounds/         # Example scripts and demos
-│   ├── vlm.py          # Vision-Language Model examples
-│   ├── slm.py          # Speech-Language Model examples
-│   └── run_*.sh         # Bash runner scripts
-├── examples/            # Example data (images and audio)
-├── utils.py            # Utility functions
-└── plot.py             # Visualization utilities
 
 ## CLI Usage (example for llava)
 ```bash
