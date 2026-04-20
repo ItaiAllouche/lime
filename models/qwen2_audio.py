@@ -1,3 +1,10 @@
+import os
+
+# set HF cache BEFORE importing transformers
+os.environ["HF_HOME"] = "/tmp/hf_cache_fresh"
+os.environ["HF_HUB_DISABLE_XET"] = "1"
+os.environ["HF_HUB_DOWNLOAD_TIMEOUT"] = "300"
+
 import torch
 import torch.nn as nn
 from transformers import AutoProcessor
@@ -5,22 +12,21 @@ import librosa
 import gc
 
 import sys
-import os
 sys.path.append(os.path.dirname(__file__))
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))  
-from modeling.modeling_qwen2_audio_lime import Qwen2AudioForConditionalGenerationKVOpt
+from modeling.modeling_qwen2_audio_lime import Qwen2AudioForConditionalGenerationLIME
 from descriptor import LimeDesc
 from lrp.patches import patch_qwen2_audio
 
 QWEN2_AUDIO_ID = 'Qwen/Qwen2-Audio-7B-Instruct'
 MAX_AUDIO_DURATION = 30
-class Qwen2AudioLIME(nn.Module):
+class Qwen2AudioLIME(nn.Module):  
     def __init__(
         self,
         verbose: bool = True
     ):
         super().__init__()
-        self.model = Qwen2AudioForConditionalGenerationKVOpt.from_pretrained(
+        self.model = Qwen2AudioForConditionalGenerationLIME.from_pretrained(
             QWEN2_AUDIO_ID,
             attn_implementation="eager",
         )
@@ -39,8 +45,8 @@ class Qwen2AudioLIME(nn.Module):
         
         # freeze parameters
         for p in self.model.parameters():
-            p.requires_grad = False    
-  
+            p.requires_grad = False
+
     def get_inputs_for_forward(
         self,
         instruction: str,
@@ -187,7 +193,8 @@ class Qwen2AudioLIME(nn.Module):
     ):    
         relevances = [] if output_relevance else None
         
-        print(f'Start generate response with:\nopt_steps={opt_steps} | opt_lr={opt_lr} | lambda_kl={lambda_kl}')
+        if plot:
+            print(f'Start generate response with:\nopt_steps={opt_steps} | opt_lr={opt_lr} | lambda_kl={lambda_kl}')
 
         device = next(self.model.parameters()).device
         inputs = {k: v.to(device) if hasattr(v, 'to') else v for k, v in inputs.items()}
@@ -208,7 +215,8 @@ class Qwen2AudioLIME(nn.Module):
         modality_bos_idx = next(i for i, t in enumerate(tokens) if t == "<|audio_bos|>")
         modality_eos_idx = next(i for i, t in enumerate(tokens) if t == "<|audio_eos|>")
         eos_id = self.processor.tokenizer.eos_token_id
-        print(f'modality_bos_idx: {modality_bos_idx} | audio_eos_idx: {modality_eos_idx}')
+        if plot:
+            print(f'modality_bos_idx: {modality_bos_idx} | audio_eos_idx: {modality_eos_idx}')
         
         # initlizte trainable kv deltas per layer - not registerd in the model
         kv_deltas = {}
@@ -259,8 +267,9 @@ class Qwen2AudioLIME(nn.Module):
         
         # generation process
         for step in range(max_new_tokens):
-            print(f'\n---------------------')
-            print(f'Generation step: {step}')
+            if plot:
+                print(f'\n---------------------')
+                print(f'Generation step: {step}')
 
             # optimize k and v by Adam opt
             for opt_step in range(opt_steps):
@@ -277,13 +286,13 @@ class Qwen2AudioLIME(nn.Module):
                 # forward + optimization step
                 optimizer.zero_grad()
 
-                print(f'Adam step: {opt_step}')
+                if plot:
+                    print(f'Adam step: {opt_step}')
                 
                 # compute relevance using LRP
                 outputs, stash = self._outputs_for_relevance(
                     inputs=model_inputs,
                     desc=desc,
-                    output_attentions=False,
                     position_ids=position_ids
                 )
                 kl_loss = desc.kl_loss
@@ -330,7 +339,8 @@ class Qwen2AudioLIME(nn.Module):
                 relevance_loss = - (log_probs[desc.modality_bos_idx:desc.modality_eos_idx+1].mean())
                 loss = lambda_kl * kl_loss + relevance_loss
 
-                print(f'KL: {kl_loss.item():.4f} | Audio Relevance: {float(-relevance_loss):.4f} | Overall loss: {loss.item():.4f}')
+                if plot:
+                    print(f'KL: {kl_loss.item():.4f} | Audio Relevance: {float(-relevance_loss):.4f} | Overall loss: {loss.item():.4f}')
 
                 loss.backward()
                 optimizer.step()
@@ -351,7 +361,8 @@ class Qwen2AudioLIME(nn.Module):
 
             # early stop if EOS everywhere
             if eos_id is not None and (next_token == eos_id).all():
-                print(f'---------------------')
+                if plot:
+                    print(f'---------------------')
                 break      
 
             # decode current answer

@@ -55,28 +55,6 @@ logger = logging.get_logger(__name__)
 _CONFIG_FOR_DOC = "Qwen2AudioConfig"
 
 QWEN2_AUDIO_ID = 'Qwen/Qwen2-Audio-7B-Instruct'
-########## lime change ##########
-def plot_token_contrib(contrib, audio_start, audio_end):
-
-    fig, ax = plt.subplots(figsize=(8, 4))
-
-    for head in range(contrib.shape[0]):
-        x = torch.arange(contrib[head].shape[0])
-        ax.plot(x.cpu().numpy(),contrib[head].detach().cpu().numpy())
-
-    ax.axvline(audio_start, linestyle="--", color="orange", linewidth=1)
-    ax.axvline(audio_end, linestyle="--", color="orange", linewidth=1)
-    _, ymax = ax.get_ylim()
-    ax.text(audio_start, int(ymax*0.93), '<AUDIO>\nSTART', color='black', ha='center', fontsize=9)
-    ax.text(audio_end, int(ymax*0.93), '<AUDIO>\nEND', color='black', ha='center', fontsize=9)
-    ax.set_xlabel("Token idx")
-    ax.set_ylabel("Tokens Contribution")
-    ax.set_title(f"Tokens Contribution Of Last Layer")
-    ax.grid(True)
-    fig.tight_layout()
-    # plt.show()
-    fig.savefig(f'/app/dev/figs/contrib.pdf', format="pdf", dpi=300, bbox_inches="tight")
-    plt.close(fig)
 
 def eager_attention_forward(
     module: nn.Module,
@@ -122,7 +100,7 @@ def eager_attention_forward(
 
     return attn_output, attn_weights
 
-class Qwen2AttentionKVOpt(nn.Module):
+class Qwen2AttentionLIME(nn.Module):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
 
     def __init__(self, config: Qwen2Config, layer_idx: int):
@@ -200,22 +178,6 @@ class Qwen2AttentionKVOpt(nn.Module):
         attn_output = self.o_proj(attn_output)
         return attn_output, attn_weights
 
-def plot_embeddings(embeddings, audio_start, audio_end):
-    embed = embeddings[0].mean(dim=-1)
-
-    plt.figure(figsize=(8, 4))
-
-    x = torch.arange(embed.shape[0])
-    plt.plot(x.cpu().numpy(),embed.cpu().numpy())
-    plt.axvline(audio_start, linestyle="--", color="orange", linewidth=1)
-    plt.axvline(audio_end, linestyle="--", color="orange", linewidth=1)
-    plt.xlabel("Token idx")
-    plt.ylabel("Mean of Embeddings")
-    plt.title(f"Embeddings Average For All Tokens")
-    plt.grid(True)
-    plt.tight_layout()
-    # plt.show()
-    plt.savefig(f'/app/dev/figs/embeddings.pdf', format="pdf", dpi=300, bbox_inches="tight")
 ########## lime change ##########
 
 @dataclass
@@ -940,7 +902,7 @@ QWEN2AUDIO_INPUTS_DOCSTRING = r"""
     """The QWEN2AUDIO model which consists of a audio backbone and a language model.""",
     QWEN2AUDIO_START_DOCSTRING,
 )
-class Qwen2AudioForConditionalGenerationKVOpt(Qwen2AudioPreTrainedModel, GenerationMixin):
+class Qwen2AudioForConditionalGenerationLIME(Qwen2AudioPreTrainedModel, GenerationMixin):
     def __init__(self, config: Qwen2AudioConfig):
         super().__init__(config)
         self.audio_tower = AutoModel.from_config(config.audio_config)  # Usually a `Qwen2AudioEncoder` instance
@@ -963,14 +925,13 @@ class Qwen2AudioForConditionalGenerationKVOpt(Qwen2AudioPreTrainedModel, Generat
         ########## lime change ##########
         self.text_config = config.text_config
 
-        # apply Qwen2AttentionKVOpt in all language model's layers
-        print("Applying Qwen2AttentionKVOpt on the language model's self attention...")
+        # apply Qwen2AttentionLIME in all language model's layers
+        print("Applying Qwen2AttentionLIME on the language model's self attention...")
         for layer in range(len(self.language_model.model.layers)):
             old_attn = self.language_model.model.layers[layer].self_attn
-            new_attn = Qwen2AttentionKVOpt(self.text_config, layer)
+            new_attn = Qwen2AttentionLIME(self.text_config, layer)
             new_attn.load_state_dict(old_attn.state_dict())
             self.language_model.model.layers[layer].self_attn = new_attn
-            print(f'Applied on layer {layer}')
         ########## lime change ##########
 
     @property
@@ -1329,7 +1290,6 @@ class Qwen2AudioForConditionalGenerationKVOpt(Qwen2AudioPreTrainedModel, Generat
                     inputs_embeds = inputs_embeds.masked_scatter(special_audio_mask, audio_features)
 
         ########## lime change ##########
-        # plot_embeddings(inputs_embeds, audio_bos_idx, audio_eos_idx)
         for layer in range(len(self.language_model.model.layers)):
             self.language_model.model.layers[layer].self_attn.desc = desc
         ########## lime change ##########

@@ -44,8 +44,8 @@ if __name__ == "__main__":
     parser.add_argument(
         '--model',
         type=str,
-        help='models: qwenvl, qwenvl2_5, llava',
-        choices=['qwenvl', 'llava', 'qwenvl2_5']
+        help='models: qwen2audio, salmonn',
+        choices=['qwen2audio', 'salmonn']
     )  
     parser.add_argument(
         "--audio_path",
