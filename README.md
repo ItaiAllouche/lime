@@ -6,17 +6,14 @@ Official PyTorch implementation of the paper "Learning to Enhance Modality Usage
   <img src="assets/fig1.jpg" height="370">
   <img src="assets/fig2.jpg" height="370">
 </h1>
-
-<h2 align="center">
   <p align="center">
     <a href="https://www.linkedin.com/in/itai-allouche/">Itai Allouche</a> •
     <a href="https://keshet.technion.ac.il">Yossi Keshet</a>
   </p>
-  
+
+<h2 align="center">
 # Learning to Enhance Modality Usage at Inference Time
 
-> Itai Allouche, Yossi Keshet<br>
->
 > **Abstract:** *Multimodal large language models (MLLMs) have demonstrated strong capabilities 
 >across vision and audio-language tasks, yet they remain prone to hallucinations,
 >generating outputs that are inconsistent with the provided perceptual inputs.
