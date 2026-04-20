@@ -47,9 +47,6 @@ Clone and setup the repository:
 git clone https://github.com/ItaiAllouche/lime.git
 cd lime
 uv sync
-
-# activate the environment
-source .venv/bin/activate
 ```
 
 ## Inference
