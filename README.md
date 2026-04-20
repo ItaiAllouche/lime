@@ -11,7 +11,7 @@ Official PyTorch implementation of the paper "Learning to Enhance Modality Usage
     <a href="https://keshet.technion.ac.il">Yossi Keshet</a>
   </p>
 
-<h2 align="center">
+<p align="center">
 # Learning to Enhance Modality Usage at Inference Time
 
 > ***Abstract:** *Multimodal large language models (MLLMs) have demonstrated strong capabilities 
@@ -31,7 +31,7 @@ Official PyTorch implementation of the paper "Learning to Enhance Modality Usage
 >tions in hallucination and improved grounding while preserving generation quality.
 >Further analysis shows that LIME increases modality contribution and produces
 >more localized and semantically aligned relevance patterns.*
-</h2>
+</p>
 
 ## Setup
 
