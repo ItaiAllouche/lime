@@ -7,23 +7,15 @@
 
 <p align="center">
 
-> <strong>Abstract.</strong> *Multimodal large language models (MLLMs) have demonstrated strong capabilities 
->across vision and audio-language tasks, yet they remain prone to hallucinations,
->generating outputs that are inconsistent with the provided perceptual inputs.
->A key factor underlying this behavior is an imbalance in modality utilization during
->inference, where textual tokens dominate the generation process while perceptual
->tokens are under-utilized, leading the model to rely on linguistic priors rather than
->grounded evidence. To address this issue, we propose Learning Inference-time
->Modality Enhancement (LIME), a training-free framework that improves multimodal grounding by
->explicitly enhancing modality usage during decoding. LIME leverages Layer-wise Relevance Propagation (LRP)
->to quantify token-level contributions and defines a relevance-based objective that promotes increased reliance
->on perceptual inputs. This objective is enforced through an inference-time updates
->to the model’s key-value representations, without modifying model parameters or
->requiring additional training data. We evaluate LIME across multiple multimodal
->benchmarks in both vision and audio domains, demonstrating consistent reductions in hallucination
->and improved grounding while preserving generation quality.
->Further analysis shows that LIME increases modality contribution and produces
->more localized and semantically aligned relevance patterns.*
+> <strong>Abstract.</strong> *Multimodal large language models (MLLMs) have revolutionized the landscape of AI, demonstrating impressive capabilities in tackling complex vision and audio-language tasks.
+>However, a critical challenge remains: these models often suffer from hallucinations, generating outputs that diverge from the provided perceptual inputs.
+>This tendency stems from an inherent imbalance in modality utilization during inference, where the dominance of textual tokens undermines the potential of perceptual inputs.
+>As a result, the model frequently resorts to textual language priors at the expense of grounded evidence.
+>To tackle this issue, we propose Learning Inference-time Modality Enhancement (LIME), a training-free framework designed to bloster  multimodal grounding by explicitly enhancing modality usage during decoding.
+>LIME leverages Layer-wise Relevance Propagation (LRP) to quantify token-level contributions and defines a relevance-based objective that promotes increased reliance on perceptual inputs.
+>This objective is enforced through inference-time updates to the model's key-value representations, without modifying model parameters or requiring additional training data. 
+>We evaluate LIME across multiple multimodal benchmarks in both vision and audio domains, demonstrating consistent reductions in hallucinations and enhanced grounding while preserving generation quality.
+>Further analysis shows that LIME increases modality contribution and produces more localized and semantically aligned relevance patterns. *
 </p>
 
 ## Setup
