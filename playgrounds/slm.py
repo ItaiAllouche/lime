@@ -34,7 +34,7 @@ def main(args):
     output = model.generate(
         inputs=inputs,
         max_new_tokens=args.max_new_tokens,
-        plot=False,
+        verbose=False,
     )
 
     print(f"Model response's: {output['response'].strip()}")
@@ -44,8 +44,8 @@ if __name__ == "__main__":
     parser.add_argument(
         '--model',
         type=str,
-        help='models: qwen2audio, salmonn',
-        choices=['qwen2audio', 'salmonn']
+        help='currently only qwen2audio is supported.',
+        choices=['qwen2audio']
     )  
     parser.add_argument(
         "--audio_path",

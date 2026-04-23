@@ -193,7 +193,7 @@ class LlavaLIME(nn.Module):
         lambda_kl: float = 0.1,
         deltas_layers: list = list(range(0,32)),
         max_new_tokens: int = 50, 
-        plot: bool = False,
+        verbose: bool = False,
         output_relevance: bool = False
     ):
         relevances = [] if output_relevance else None
@@ -224,7 +224,7 @@ class LlavaLIME(nn.Module):
             raise ValueError("No <image> tokens found in input!")
         
         eos_id = self.processor.tokenizer.eos_token_id
-        if plot:
+        if verbose:
             print(f'modality_bos_idx: {modality_bos_idx} | modality_eos_idx: {modality_eos_idx}')
         
         # initialize trainable kv deltas per layer - not registered in the model 
@@ -276,7 +276,7 @@ class LlavaLIME(nn.Module):
         
         # generation process
         for step in range(max_new_tokens):
-            if plot:
+            if verbose:
                 print(f'\n---------------------')
                 print(f'Generation step: {step}')
 
@@ -295,7 +295,7 @@ class LlavaLIME(nn.Module):
                 # forward + optimization step
                 optimizer.zero_grad()
 
-                if plot:
+                if verbose:
                     print(f'Adam step: {opt_step}')
 
                 # compute relevance using LRP
@@ -346,7 +346,7 @@ class LlavaLIME(nn.Module):
                 relevance_loss = - (log_probs[desc.modality_bos_idx:desc.modality_eos_idx+1].mean())
                 loss = lambda_kl * kl_loss + relevance_loss
 
-                if plot:
+                if verbose:
                     print(f'KL: {kl_loss.item():.4f} | Image Relevance: {float(-relevance_loss):.4f} | Overall loss: {loss.item():.4f}')
     
                 loss.backward()
@@ -368,7 +368,7 @@ class LlavaLIME(nn.Module):
 
             # early stop if EOS everywhere
             if eos_id is not None and (next_token == eos_id).all():
-                if plot:
+                if verbose:
                     print(f'---------------------')
                 break      
 
@@ -380,7 +380,7 @@ class LlavaLIME(nn.Module):
                 clean_up_tokenization_spaces=False
             )[0]            
 
-            if plot:
+            if verbose:
                 print(f"Partial answer: {decoded_answer}")
                 print(f'---------------------')
 
@@ -433,7 +433,7 @@ class LlavaLIME(nn.Module):
         generated_token_ids = gen_ids[0].detach().cpu().tolist()
         generated_tokens = self.processor.tokenizer.convert_ids_to_tokens(generated_token_ids)
 
-        if plot:
+        if verbose:
             print(f"Model's output: {response}" )
 
         output = {

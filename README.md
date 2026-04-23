@@ -85,7 +85,7 @@ inputs = model.get_inputs_for_forward(
 output = model.generate(
     inputs=inputs,
     max_new_tokens=50,
-    plot=False
+    verbose=False
 )
 
 print(f"Response: {output['response']}")

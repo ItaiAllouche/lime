@@ -197,7 +197,7 @@ class QwenVL2_5LIME(nn.Module):
         lambda_kl: float = 0.1,
         deltas_layers: list = list(range(0,28)), # qwen2_5VL has 28 decoder layers
         max_new_tokens: int = 50, 
-        plot: bool = False,
+        verbose: bool = False,
         output_relevance: bool = False
     ):
         relevances = [] if output_relevance else None
@@ -224,7 +224,7 @@ class QwenVL2_5LIME(nn.Module):
         modality_eos_idx = next(i for i, t in enumerate(tokens) if t == "<|vision_end|>")
         eos_id = self.processor.tokenizer.eos_token_id
 
-        if plot:
+        if verbose:
             print(f'modality_bos_idx: {modality_bos_idx} | audio_eos_idx: {modality_eos_idx}')
         
         # initlizte trainable kv deltas per layer - not registerd in the model 
@@ -276,7 +276,7 @@ class QwenVL2_5LIME(nn.Module):
         
         # generation process
         for step in range(max_new_tokens):
-            if plot:
+            if verbose:
                 print(f'\n---------------------')
                 print(f'Generation step: {step}')
 
@@ -295,7 +295,7 @@ class QwenVL2_5LIME(nn.Module):
                 # forward + optimization step
                 optimizer.zero_grad()
 
-                if plot:
+                if verbose:
                     print(f'Adam step: {opt_step}')
                 
                 # compute relevance using LRP
@@ -347,7 +347,7 @@ class QwenVL2_5LIME(nn.Module):
                 relevance_loss = - (log_probs[desc.modality_bos_idx:desc.modality_eos_idx+1].mean())
                 loss = lambda_kl * kl_loss + relevance_loss
 
-                if plot:
+                if verbose:
                     print(f'KL: {kl_loss.item():.4f} | Image Relevance: {float(-relevance_loss):.4f} | Overall loss: {loss.item():.4f}')
                 
                 loss.backward()
@@ -369,7 +369,7 @@ class QwenVL2_5LIME(nn.Module):
 
             # early stop if EOS everywhere
             if eos_id is not None and (next_token == eos_id).all():
-                if plot:
+                if verbose:
                     print(f'---------------------')
                 break      
 
@@ -381,7 +381,7 @@ class QwenVL2_5LIME(nn.Module):
                 clean_up_tokenization_spaces=False
             )[0]            
 
-            if plot:
+            if verbose:
                 print(f"Partial answer: {decoded_answer}")
                 print(f'---------------------')
 
@@ -435,7 +435,7 @@ class QwenVL2_5LIME(nn.Module):
         generated_token_ids = gen_ids[0].detach().cpu().tolist()
         generated_tokens = self.processor.tokenizer.convert_ids_to_tokens(generated_token_ids)        
 
-        if plot:
+        if verbose:
             print(f'\nTokens: {tokens}')
             print(f"Model's output: {response}" )
          

@@ -176,7 +176,7 @@ class QwenVLLIME(nn.Module):
         lambda_kl: float = 0.1,
         deltas_layers: list =list(range(0,32)), # Qwen-VL-Chat has 32 decoder layers
         max_new_tokens: int = 50, 
-        plot: bool = False,
+        verbose: bool = False,
         output_relevance: bool = False        
     ):
         relevances = [] if output_relevance else None
@@ -224,7 +224,7 @@ class QwenVLLIME(nn.Module):
         modality_eos_idx = modality_bos_idx + num_image_tokens
         modality_eos_idx = min(modality_eos_idx, len(input_ids_list) - 1)
         
-        if plot:
+        if verbose:
             print(f'modality_bos_idx: {modality_bos_idx} | modality_eos_idx: {modality_eos_idx}')
         
         # initialize trainable KV deltas per layer
@@ -278,7 +278,7 @@ class QwenVLLIME(nn.Module):
         
         # Generation process
         for step in range(max_new_tokens):
-            if plot:
+            if verbose:
                 print(f'\n---------------------')
                 print(f'Generation step: {step}')
 
@@ -296,7 +296,7 @@ class QwenVLLIME(nn.Module):
                 # Forward + optimization step
                 optimizer.zero_grad()
 
-                if plot:
+                if verbose:
                     print(f'Adam step: {opt_step}')
                 
                 # Compute relevance using LRP
@@ -346,7 +346,7 @@ class QwenVLLIME(nn.Module):
                 relevance_loss = -(log_probs[desc.modality_bos_idx:desc.modality_eos_idx+1].mean())
                 loss = lambda_kl * kl_loss + relevance_loss
 
-                if plot:
+                if verbose:
                     print(f'KL: {kl_loss.item():.4f} | Image Relevance: {float(-relevance_loss):.4f} | Overall loss: {loss.item():.4f}')
                 
                 loss.backward()
@@ -377,7 +377,7 @@ class QwenVLLIME(nn.Module):
             
             # Check if EOS
             if eos_id is not None and next_token[0, 0].item() == eos_id:
-                if plot:
+                if verbose:
                     print(f"Stopping: Hit EOS token")
                 break            
             
@@ -444,7 +444,7 @@ class QwenVLLIME(nn.Module):
         generated_token_ids = gen_ids
         generated_tokens = self.tokenizer.convert_ids_to_tokens(generated_token_ids)        
 
-        if plot:
+        if verbose:
             print(f"Model's output: {response}")
         
         output = {

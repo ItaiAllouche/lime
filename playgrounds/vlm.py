@@ -52,7 +52,7 @@ def main(args):
     output = model.generate(
         inputs=inputs,
         max_new_tokens=args.max_new_tokens,
-        plot=False,
+        verbose=False,
     )
 
     print(f"Model response's: {output['response'].strip()}")
