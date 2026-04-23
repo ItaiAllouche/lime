@@ -40,6 +40,7 @@ Install uv on your machine, see intrucitons [here](https://docs.astral.sh/uv/get
 Clone and setup the repository:
 
 ```bash
+# clone cmd
 cd lime
 uv sync
 ```
