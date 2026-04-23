@@ -4,10 +4,6 @@
   <img src="assets/fig1.jpg" height="370">
   <img src="assets/fig2.jpg" height="370">
 </h1>
-  <p align="center">
-    <a href="https://www.linkedin.com/in/itai-allouche/">Itai Allouche</a> •
-    <a href="https://keshet.technion.ac.il">Yossi Keshet</a>
-  </p>
 
 <p align="center">
 
@@ -44,7 +40,6 @@ Install uv on your machine, see intrucitons [here](https://docs.astral.sh/uv/get
 Clone and setup the repository:
 
 ```bash
-git clone https://github.com/ItaiAllouche/lime.git
 cd lime
 uv sync
 ```
