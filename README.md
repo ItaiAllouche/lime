@@ -15,7 +15,7 @@
 >LIME leverages Layer-wise Relevance Propagation (LRP) to quantify token-level contributions and defines a relevance-based objective that promotes increased reliance on perceptual inputs.
 >This objective is enforced through inference-time updates to the model's key-value representations, without modifying model parameters or requiring additional training data. 
 >We evaluate LIME across multiple multimodal benchmarks in both vision and audio domains, demonstrating consistent reductions in hallucinations and enhanced grounding while preserving generation quality.
->Further analysis shows that LIME increases modality contribution and produces more localized and semantically aligned relevance patterns. *
+>Further analysis shows that LIME increases modality contribution and produces more localized and semantically aligned relevance patterns.*
 </p>
 
 ## Setup
