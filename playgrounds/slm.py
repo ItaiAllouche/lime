@@ -50,7 +50,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--audio_path",
         type=str,
-        default='/app/datasets/coco/val2014',
+        default='../examples/audio/260-123286-0000.wav',
         help="Path for audio to process",
     )
     parser.add_argument(

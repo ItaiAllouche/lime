@@ -68,7 +68,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--image_path",
         type=str,
-        default='/app/datasets/coco/val2014',
+        default='../examples/images/COCO_val2014_000000052462.jpg',
         help="Path for image to process",
     )
     parser.add_argument(
