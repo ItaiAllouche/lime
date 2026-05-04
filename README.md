@@ -45,7 +45,7 @@ We provide both CLI and Python interfaces for running inference with LIME.
 
 ```bash
 cd playgrounds
-uv vlm.py \
+uv run vlm.py \
     --model llava \
     --prompt "What is in this image?" \
     --image_path path/to/image \
