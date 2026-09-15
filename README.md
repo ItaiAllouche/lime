@@ -7,15 +7,7 @@
 
 <p align="center">
 
-> <strong>Abstract.</strong> *Multimodal large language models (MLLMs) have revolutionized the landscape of AI, demonstrating impressive capabilities in tackling complex vision and audio-language tasks.
->However, a critical challenge remains: these models often suffer from hallucinations, generating outputs that diverge from the provided perceptual inputs.
->This tendency stems from an inherent imbalance in modality utilization during inference, where the dominance of textual tokens undermines the potential of perceptual inputs.
->As a result, the model frequently resorts to textual language priors at the expense of grounded evidence.
->To tackle this issue, we propose Learning Inference-time Modality Enhancement (LIME), a training-free framework designed to bolster multimodal grounding by explicitly enhancing modality usage during decoding.
->LIME leverages Layer-wise Relevance Propagation (LRP) to quantify token-level contributions and defines a relevance-based objective that promotes increased reliance on perceptual inputs.
->This objective is enforced through inference-time updates to the model's key-value representations, without modifying model parameters or requiring additional training data. 
->We evaluate LIME across multiple multimodal benchmarks in both vision and audio domains, demonstrating consistent reductions in hallucinations and enhanced grounding while preserving generation quality.
->Further analysis shows that LIME increases modality contribution and produces more localized and semantically aligned relevance patterns.*
+> <strong>Abstract.</strong> *Multimodal large language models (MLLMs) achieve strong performance on vision- and audio-language tasks, yet can generate outputs that diverge from the provided perceptual inputs, commonly referred to as multimodal hallucinations. Prior work has associated such hallucinations with an imbalance in perceptual utilization, where textual information can dominate perceptual evidence and bias generation toward language priors. While previous work used heuristics to correct this imbalance, we take a different route by using Layer-wise Relevance Propagation (LRP), which directly decomposes predictions into token-level contributions, to both analyze this behavior and propose a mitigation. First, we examine whether this imbalance contributes to hallucinations and show that hallucinations often coincide with reduced perceptual relevance and, crucially, that intervening on this relevance changes prediction behavior. We further leverage LRP and propose a training-free framework that shifts relevance toward perceptual tokens by optimizing key-value representations during decoding, without modifying model parameters or requiring training data. We call this method Learning Inference-time Modality Enhancement (LIME). Despite using no spatial or temporal supervision, LIME concentrates relevance on query-relevant regions. We evaluate LIME across multiple multimodal benchmarks in both vision and audio domains, demonstrating consistent reductions in hallucinations and enhanced grounding while preserving generation quality..*
 </p>
 
 ## Setup
